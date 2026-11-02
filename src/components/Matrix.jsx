@@ -3,7 +3,16 @@ import { supabase } from '../lib/supabase'
 import { RANKS, rankOf } from '../lib/constants'
 import BottomSheet from './BottomSheet'
 
-const WEIGHT = { want: 3, nice: 1 }
+const WEIGHT = { must: 5, want: 3, nice: 1 }
+// 〇△✕は scores.score に保存：3=〇（2点）、2=△（1点）、1=✕（0点）
+const MARKS = [
+  { score: 3, label: '〇', pts: 2, cls: 'text-moss' },
+  { score: 2, label: '△', pts: 1, cls: 'text-amber-600' },
+  { score: 1, label: '✕', pts: 0, cls: 'text-rose-600' },
+]
+const markOf = (score) => MARKS.find((m) => m.score === score)
+const ptsOf = (score) => markOf(score)?.pts ?? null
+const labelOfPts = (p) => (p == null ? '—' : p >= 1.75 ? '〇' : p >= 0.75 ? '△' : '✕')
 
 // 比較マトリックス（土地・建物で共通）
 // 行＝評価項目、列＝候補。1列目を固定して横スクロール。
@@ -13,7 +22,7 @@ export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
   const partner = ctx.members.find((m) => m.user_id !== me.user_id)
   const [criteria, setCriteria] = useState([])
   const [scores, setScores] = useState({})
-  const [mode, setMode] = useState('agreed') // me | partner | agreed
+  const [mode, setMode] = useState('common') // me | partner | common
   const [cell, setCell] = useState(null) // { c, cand }
   const [manage, setManage] = useState(false)
 
@@ -31,17 +40,31 @@ export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
 
   useEffect(() => { load() }, [load])
 
-  const raterOf = (m) => (m === 'me' ? me.user_id : m === 'partner' ? partner?.user_id : 'agreed')
-  const rater = raterOf(mode)
-  const get = (cid, tid, r = rater) => scores[`${cid}|${tid}|${r}`]
+  const raw = (cid, tid, r) => scores[`${cid}|${tid}|${r}`]
+  const people = [me.user_id, partner?.user_id].filter(Boolean)
+
+  // セルの点（0〜2）。共通＝手で上書きした値があればそれ、なければ2人の平均
+  const cellPts = (cid, tid, m = mode) => {
+    if (m === 'me') return ptsOf(raw(cid, tid, me.user_id)?.score)
+    if (m === 'partner') return partner ? ptsOf(raw(cid, tid, partner.user_id)?.score) : null
+    const over = ptsOf(raw(cid, tid, 'agreed')?.score)
+    if (over != null) return over
+    const vals = people.map((u) => ptsOf(raw(cid, tid, u)?.score)).filter((v) => v != null)
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null
+  }
+  const isOverride = (cid, tid) => raw(cid, tid, 'agreed')?.score != null
+  const differ = (cid, tid) => {
+    if (people.length < 2) return false
+    const [a, b] = people.map((u) => raw(cid, tid, u)?.score)
+    return a != null && b != null && a !== b
+  }
 
   const save = async (c, tid, r, values) => {
     const key = `${c.id}|${tid}|${r}`
-    const prev = scores[key] || {}
-    const next = { ...prev, ...values }
+    const next = { ...(scores[key] || {}), ...values }
     setScores((m) => ({ ...m, [key]: next }))
     const { error } = await supabase.from('scores').upsert(
-      { household_id: hid, criteria_id: c.id, target_id: tid, rater: r, pass: next.pass ?? null, score: next.score ?? null, memo: next.memo ?? '', updated_at: new Date().toISOString() },
+      { household_id: hid, criteria_id: c.id, target_id: tid, rater: r, pass: null, score: next.score ?? null, memo: next.memo ?? '', updated_at: new Date().toISOString() },
       { onConflict: 'criteria_id,target_id,rater' },
     )
     if (error) { alert(error.message); load() }
@@ -52,24 +75,25 @@ export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
     return [...criteria].sort((a, b) => order[a.rank] - order[b.rank] || a.sort - b.sort)
   }, [criteria])
 
+  // 総合点：評価済みの項目だけで、Σ(重み×点) ÷ Σ(重み×2) × 100
   const summary = (tid) => {
-    const failed = sorted.some((c) => c.rank === 'must' && get(c.id, tid)?.pass === false)
-    let got = 0; let max = 0; let any = false
+    let got = 0; let max = 0; let done = 0; let failed = false
     sorted.forEach((c) => {
-      if (c.rank === 'must') return
-      max += WEIGHT[c.rank] * 5
-      const v = get(c.id, tid)?.score
-      if (v) { got += WEIGHT[c.rank] * v; any = true }
+      const v = cellPts(c.id, tid)
+      if (v == null) return
+      done++
+      got += WEIGHT[c.rank] * v; max += WEIGHT[c.rank] * 2
+      if (c.rank === 'must' && v < 0.75) failed = true
     })
-    return { failed, total: any && max ? Math.round((got / max) * 100) : null }
+    return { failed, total: max ? Math.round((got / max) * 100) : null, done }
   }
 
-  const canEdit = rater === 'agreed' || rater === me.user_id
+  const editRater = mode === 'me' ? me.user_id : mode === 'common' ? 'agreed' : null
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-1 border-b border-stone-200 bg-paper p-2 text-xs">
-        {[['me', me.display_name], ['partner', partner?.display_name ?? 'パートナー'], ['agreed', 'ふたりの合意']].map(([m, l]) => (
+        {[['me', me.display_name], ['partner', partner?.display_name ?? 'パートナー'], ['common', '共通']].map(([m, l]) => (
           <button key={m} disabled={m === 'partner' && !partner} className={`min-h-10 flex-1 truncate rounded-lg px-1 disabled:opacity-40 ${mode === m ? 'bg-moss font-bold text-white' : 'bg-white'}`} onClick={() => setMode(m)}>{l}</button>
         ))}
         <button className="min-h-10 rounded-lg bg-stone-800 px-3 text-white" onClick={() => setManage(true)}>項目</button>
@@ -94,7 +118,8 @@ export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
                       <button className="block w-full text-center underline decoration-stone-300" onClick={() => onOpenCandidate?.(cand.id)}>
                         <span className="line-clamp-2 break-all">{cand.name}</span>
                       </button>
-                      <span className={`mt-1 block text-lg font-black ${s.failed ? '' : 'text-moss'}`}>{s.failed ? '✕' : s.total ?? '—'}</span>
+                      <span className={`mt-1 block text-lg font-black ${s.failed ? '' : 'text-moss'}`}>{s.total ?? '—'}</span>
+                      <span className="block text-[9px] font-normal text-stone-400">{s.failed ? 'Mustに✕' : `${s.done}/${sorted.length}項目`}</span>
                     </th>
                   )
                 })}
@@ -110,15 +135,18 @@ export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
                       <span className="break-all">{c.name}</span>
                     </td>
                     {candidates.map((cand) => {
-                      const v = get(c.id, cand.id)
-                      const failed = summary(cand.id).failed
-                      const other = [me.user_id, partner?.user_id].filter(Boolean).map((u) => get(c.id, cand.id, u))
-                      const differ = mode === 'agreed' && other.length === 2 && JSON.stringify([other[0]?.pass, other[0]?.score]) !== JSON.stringify([other[1]?.pass, other[1]?.score])
+                      const v = cellPts(c.id, cand.id)
+                      const warn = mode === 'common' && differ(c.id, cand.id) && !isOverride(c.id, cand.id)
+                      const lbl = labelOfPts(v)
+                      const color = lbl === '〇' ? 'text-moss' : lbl === '△' ? 'text-amber-600' : lbl === '✕' ? 'text-rose-600' : 'text-stone-300'
+                      const memo = raw(c.id, cand.id, editRater ?? partner?.user_id)?.memo
                       return (
-                        <td key={cand.id} className={`border-b border-stone-100 p-0 text-center ${failed ? 'bg-stone-100' : 'bg-white'}`}>
-                          <button className={`flex min-h-11 w-full items-center justify-center gap-0.5 ${differ ? 'bg-amber-50' : ''}`} onClick={() => setCell({ c, cand })}>
-                            <CellValue c={c} v={v} />
-                            {v?.memo && <span className="text-[9px] text-stone-400">✎</span>}
+                        <td key={cand.id} className={`border-b border-stone-100 p-0 text-center ${summary(cand.id).failed ? 'bg-stone-100' : 'bg-white'}`}>
+                          <button className={`flex min-h-11 w-full flex-col items-center justify-center ${warn ? 'bg-amber-50' : ''}`} onClick={() => setCell({ c, cand })}>
+                            <span className={`text-base font-bold ${color}`}>{lbl}{memo ? <sup className="text-[9px] text-stone-400">✎</sup> : null}</span>
+                            {mode === 'common' && v != null && (
+                              <span className="text-[9px] text-stone-400">{isOverride(c.id, cand.id) ? '手動' : Number.isInteger(v) ? '' : v.toFixed(1)}</span>
+                            )}
                           </button>
                         </td>
                       )
@@ -129,16 +157,16 @@ export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
             </tbody>
           </table>
           <p className="p-3 text-[11px] leading-relaxed text-stone-400">
-            点数＝Want（重み3）とNice（重み1）の合計を100点満点に換算。Mustに✕があると列がグレーになります。
-            {mode === 'agreed' && partner && ' 黄色のセルは2人の評価がちがうところです。'}
+            〇＝2点・△＝1点・✕＝0点。重みはMust 5／Want 3／Nice 1で、評価済みの項目を100点満点に換算します。Mustに✕があると列がグレーになります。
+            {mode === 'common' && ' 共通は2人の平均（タップで手動の上書きも可）。黄色は2人の評価がちがうところです。'}
           </p>
         </div>
       )}
 
       {cell && (
         <CellSheet
-          ctx={ctx} partner={partner} c={cell.c} cand={cell.cand} rater={rater} canEdit={canEdit}
-          get={get} onSave={(values) => save(cell.c, cell.cand.id, rater, values)} onClose={() => setCell(null)}
+          ctx={ctx} partner={partner} c={cell.c} cand={cell.cand} mode={mode} editRater={editRater}
+          raw={raw} cellPts={cellPts} onSave={(values) => save(cell.c, cell.cand.id, editRater, values)} onClose={() => setCell(null)}
         />
       )}
       {manage && <CriteriaSheet ctx={ctx} target={target} criteria={criteria} reload={load} onClose={() => setManage(false)} />}
@@ -146,51 +174,44 @@ export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
   )
 }
 
-function CellValue({ c, v }) {
-  if (c.rank === 'must') {
-    if (v?.pass === true) return <span className="text-base font-bold text-moss">〇</span>
-    if (v?.pass === false) return <span className="text-base font-bold text-rose-600">✕</span>
-    return <span className="text-stone-300">—</span>
-  }
-  return v?.score ? <span className="text-base font-bold">{v.score}</span> : <span className="text-stone-300">—</span>
-}
-
-function CellSheet({ ctx, partner, c, cand, rater, canEdit, get, onSave, onClose }) {
-  const v = get(c.id, cand.id) || {}
-  const [memo, setMemo] = useState(v.memo || '')
-  const close = () => { if (canEdit && memo !== (v.memo || '')) onSave({ memo }); onClose() }
-  const label = rater === 'agreed' ? 'ふたりの合意' : `${ctx.me.display_name}の評価`
-  const show = (x) => (c.rank === 'must' ? (x?.pass === true ? '〇' : x?.pass === false ? '✕' : '—') : x?.score ?? '—')
+function CellSheet({ ctx, partner, c, cand, mode, editRater, raw, cellPts, onSave, onClose }) {
+  const mine = editRater ? raw(c.id, cand.id, editRater) || {} : {}
+  const [memo, setMemo] = useState(mine.memo || '')
+  const close = () => { if (editRater && memo !== (mine.memo || '')) onSave({ memo }); onClose() }
+  const show = (u) => markOf(raw(c.id, cand.id, u)?.score)?.label ?? '—'
+  const common = cellPts(c.id, cand.id, 'common')
 
   return (
     <BottomSheet open title={`${cand.name}｜${c.name}`} onClose={close}>
       <div className="space-y-4 text-sm">
-        <div className="flex flex-wrap gap-3 text-xs text-stone-600">
-          <span>{ctx.me.display_name}：<b>{show(get(c.id, cand.id, ctx.me.user_id))}</b></span>
-          {partner && <span>{partner.display_name}：<b>{show(get(c.id, cand.id, partner.user_id))}</b></span>}
-          <span>合意：<b>{show(get(c.id, cand.id, 'agreed'))}</b></span>
+        <div className="flex flex-wrap gap-4 rounded-lg bg-stone-50 p-3 text-xs text-stone-600">
+          <span>{ctx.me.display_name}：<b className="text-base">{show(ctx.me.user_id)}</b></span>
+          {partner && <span>{partner.display_name}：<b className="text-base">{show(partner.user_id)}</b></span>}
+          <span>共通：<b className="text-base">{labelOfPts(common)}</b>{common != null && !Number.isInteger(common) ? `（${common.toFixed(1)}点）` : ''}</span>
         </div>
-        {canEdit ? (
+
+        {editRater ? (
           <>
-            <p className="font-bold">{label}</p>
-            {c.rank === 'must' ? (
-              <div className="grid grid-cols-3 gap-2">
-                {[[true, '〇 満たす'], [false, '✕ 満たさない'], [null, 'クリア']].map(([val, l]) => (
-                  <button key={l} className={`min-h-12 rounded-xl border-2 ${v.pass === val ? 'border-moss bg-moss text-white' : 'border-stone-200'}`} onClick={() => onSave({ pass: val })}>{l}</button>
-                ))}
-              </div>
-            ) : (
-              <div className="grid grid-cols-6 gap-1.5">
-                {[1, 2, 3, 4, 5].map((n) => (
-                  <button key={n} className={`min-h-12 rounded-xl border-2 text-lg font-bold ${v.score === n ? 'border-moss bg-moss text-white' : 'border-stone-200'}`} onClick={() => onSave({ score: n })}>{n}</button>
-                ))}
-                <button className="min-h-12 rounded-xl border-2 border-stone-200 text-xs" onClick={() => onSave({ score: null })}>クリア</button>
-              </div>
-            )}
+            <p className="font-bold">{mode === 'common' ? '共通を手動で決める（空なら2人の平均）' : `${ctx.me.display_name}の評価`}</p>
+            <div className="grid grid-cols-3 gap-2">
+              {MARKS.map((m) => (
+                <button key={m.score}
+                  className={`min-h-14 rounded-xl border-2 text-2xl font-bold ${mine.score === m.score ? 'border-moss bg-moss text-white' : `border-stone-200 ${m.cls}`}`}
+                  onClick={() => onSave({ score: mine.score === m.score ? null : m.score })}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-stone-400">
+              {mode === 'common' ? '同じものをもう一度押すと手動の上書きを解除し、2人の平均に戻ります。' : '同じものをもう一度押すと未評価に戻ります。'}
+            </p>
             <textarea className="min-h-20 w-full rounded-lg border border-stone-300 px-3 py-2" placeholder="メモ（理由・気づいたこと）" value={memo} onChange={(e) => setMemo(e.target.value)} />
           </>
         ) : (
-          <p className="text-xs text-stone-500">パートナーの評価は見るだけです。{v.memo && <><br />メモ：{v.memo}</>}</p>
+          <p className="text-xs text-stone-500">
+            パートナーの評価は見るだけです。
+            {partner && raw(c.id, cand.id, partner.user_id)?.memo && <><br />メモ：{raw(c.id, cand.id, partner.user_id).memo}</>}
+          </p>
         )}
       </div>
     </BottomSheet>
