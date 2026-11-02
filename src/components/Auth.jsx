@@ -1,29 +1,68 @@
 import { useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, authErrorFromUrl } from '../lib/supabase'
 
 export function Login() {
-  const [email, setEmail] = useState('')
+  const [email, setEmail] = useState(() => localStorage.getItem('homest-email') || '')
   const [sent, setSent] = useState(false)
+  const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState(
+    authErrorFromUrl ? 'ログインリンクが使えませんでした（期限切れ・使用済みの可能性）。下からもう一度送ってください。' : '',
+  )
 
   const send = async () => {
-    if (!email.trim()) return
+    const e = email.trim()
+    if (!e) return
     setBusy(true)
     const { error } = await supabase.auth.signInWithOtp({
-      email: email.trim(),
-      options: { emailRedirectTo: window.location.href },
+      email: e,
+      options: { emailRedirectTo: window.location.origin + window.location.pathname + window.location.search },
     })
     setBusy(false)
     if (error) return alert(error.message)
+    localStorage.setItem('homest-email', e)
+    setNotice('')
     setSent(true)
+  }
+
+  const verify = async () => {
+    const token = code.replace(/\D/g, '')
+    if (token.length < 6) return
+    setBusy(true)
+    const { error } = await supabase.auth.verifyOtp({ email: email.trim(), token, type: 'email' })
+    setBusy(false)
+    if (error) alert('コードが正しくないか、期限が切れています。もう一度送ってください。\n' + error.message)
+    // 成功すると onAuthStateChange で自動的に画面が切り替わる
   }
 
   return (
     <Shell>
+      {notice && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">{notice}</p>}
       {sent ? (
-        <p className="text-center text-sm leading-relaxed">
-          {email} にログイン用のリンクを送りました。<br />メールを開いてリンクをタップしてください。
-        </p>
+        <div className="space-y-3">
+          <p className="text-sm leading-relaxed">
+            {email} にメールを送りました。<br />
+            メールに書かれた<b>コード</b>をここに入力してください。
+          </p>
+          <input
+            className="w-full rounded-lg border border-stone-300 px-3 py-3 text-center text-2xl tracking-[0.4em]"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            maxLength={10}
+            placeholder="000000"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+          />
+          <button disabled={busy} className="min-h-12 w-full rounded-lg bg-moss font-bold text-white disabled:opacity-40" onClick={verify}>
+            ログイン
+          </button>
+          <p className="text-xs leading-relaxed text-stone-500">
+            ※メールのリンクをタップしてもログインできますが、メールアプリ内のブラウザで開くとログイン状態が普段のブラウザに残らないことがあります。コード入力がおすすめです。
+          </p>
+          <button className="min-h-11 w-full text-sm text-stone-500 underline" onClick={() => { setSent(false); setCode('') }}>
+            メールアドレスを変える／送り直す
+          </button>
+        </div>
       ) : (
         <div className="space-y-3">
           <input
@@ -34,7 +73,7 @@ export function Login() {
             onChange={(e) => setEmail(e.target.value)}
           />
           <button disabled={busy} className="min-h-12 w-full rounded-lg bg-moss font-bold text-white disabled:opacity-40" onClick={send}>
-            ログインリンクを送る
+            ログイン用メールを送る
           </button>
         </div>
       )}

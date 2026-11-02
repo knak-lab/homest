@@ -22,6 +22,16 @@
 - Site URL：`https://knak-lab.github.io/homest/`
 - Redirect URLs に追加：`https://knak-lab.github.io/homest/**`
 
+### 3-2. ログインメールにコードを載せる
+**Authentication → Emails（Email Templates）** で、次の2つのテンプレートの本文に1行追加して保存する
+- **Magic Link**（2回目以降のログイン）
+- **Confirm signup**（初めてのログイン。パートナーの初回など）
+
+追加する行：
+```
+ログインコード：{{ .Token }}
+```
+
 ### 4. 接続情報を確認する
 **Project Settings → API Keys**（または Data API）で、次の2つを確認する
 - Project URL（`https://xxxx.supabase.co`）
