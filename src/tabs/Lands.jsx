@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import BottomSheet from '../components/BottomSheet'
 import Attachments from '../components/Attachments'
-import Matrix from '../components/Matrix'
+import Matrix, { EvalSheet } from '../components/Matrix'
 
 export const LAND_STATUS = ['検討中', '見学予定', '見学済', '申込検討', '見送り']
 const STATUS_CLS = {
@@ -144,6 +144,7 @@ function LandSheet({ ctx, land, areas, agencies, reload, onClose }) {
     price: land?.price ?? '', tsubo: land?.tsubo ?? '', status: land?.status ?? '検討中', url: land?.url ?? '', note: land?.note ?? '',
   }))
   const [id, setId] = useState(land?.id ?? null)
+  const [evalOpen, setEvalOpen] = useState(false)
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }))
 
   const payload = () => ({
@@ -184,6 +185,10 @@ function LandSheet({ ctx, land, areas, agencies, reload, onClose }) {
     <BottomSheet open title={id ? '候補地' : '候補地を追加'} onClose={close}>
       <div className="space-y-3 text-sm">
         <input className={`${input} py-3 text-base`} placeholder="名前（例：所沢 荒幡）" value={f.name} onChange={set('name')} />
+        <button className="min-h-12 w-full rounded-xl bg-moss font-bold text-white disabled:opacity-40" disabled={!id && !f.name.trim()}
+          onClick={async () => { if (!id) { const ok = await save(); if (!ok) return } setEvalOpen(true) }}>
+          ⭐ この土地を評価する
+        </button>
         <div className="grid grid-cols-2 gap-2">
           <Field label="エリア">
             <select className={input} value={f.area_id} onChange={set('area_id')}>
@@ -230,6 +235,7 @@ function LandSheet({ ctx, land, areas, agencies, reload, onClose }) {
 
         {id && <button className="min-h-11 w-full text-sm text-rose-600" onClick={remove}>この候補地を削除</button>}
       </div>
+      {evalOpen && id && <EvalSheet ctx={ctx} target="land" candidate={{ id, name: f.name || '候補地' }} onClose={() => { setEvalOpen(false); reload() }} />}
     </BottomSheet>
   )
 }

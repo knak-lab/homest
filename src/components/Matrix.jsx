@@ -14,17 +14,13 @@ const markOf = (score) => MARKS.find((m) => m.score === score)
 const ptsOf = (score) => markOf(score)?.pts ?? null
 const labelOfPts = (p) => (p == null ? '—' : p >= 1.75 ? '〇' : p >= 0.75 ? '△' : '✕')
 
-// 比較マトリックス（土地・建物で共通）
-// 行＝評価項目、列＝候補。1列目を固定して横スクロール。
-export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
+// 評価データの読み書きと計算（比較表・物件ごとの評価シートで共通）
+export function useEval(ctx, target) {
   const hid = ctx.household.id
   const me = ctx.me
   const partner = ctx.members.find((m) => m.user_id !== me.user_id)
   const [criteria, setCriteria] = useState([])
   const [scores, setScores] = useState({})
-  const [mode, setMode] = useState('common') // me | partner | common
-  const [cell, setCell] = useState(null) // { c, cand }
-  const [manage, setManage] = useState(false)
 
   const load = useCallback(async () => {
     const [c, s] = await Promise.all([
@@ -44,19 +40,19 @@ export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
   const people = [me.user_id, partner?.user_id].filter(Boolean)
 
   // セルの点（0〜2）。共通＝手で上書きした値があればそれ、なければ2人の平均
-  const cellPts = (cid, tid, m = mode) => {
+  const cellPts = (cid, tid, m) => {
     if (m === 'me') return ptsOf(raw(cid, tid, me.user_id)?.score)
     if (m === 'partner') return partner ? ptsOf(raw(cid, tid, partner.user_id)?.score) : null
     const over = ptsOf(raw(cid, tid, 'agreed')?.score)
     if (over != null) return over
     const vals = people.map((u) => ptsOf(raw(cid, tid, u)?.score)).filter((v) => v != null)
-    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null
+    return vals.length ? vals.reduce((x, y) => x + y, 0) / vals.length : null
   }
   const isOverride = (cid, tid) => raw(cid, tid, 'agreed')?.score != null
   const differ = (cid, tid) => {
     if (people.length < 2) return false
-    const [a, b] = people.map((u) => raw(cid, tid, u)?.score)
-    return a != null && b != null && a !== b
+    const [x, y] = people.map((u) => raw(cid, tid, u)?.score)
+    return x != null && y != null && x !== y
   }
 
   const save = async (c, tid, r, values) => {
@@ -72,14 +68,14 @@ export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
 
   const sorted = useMemo(() => {
     const order = { must: 0, want: 1, nice: 2 }
-    return [...criteria].sort((a, b) => order[a.rank] - order[b.rank] || a.sort - b.sort)
+    return [...criteria].sort((x, y) => order[x.rank] - order[y.rank] || x.sort - y.sort)
   }, [criteria])
 
   // 総合点：評価済みの項目だけで、Σ(重み×点) ÷ Σ(重み×2) × 100
-  const summary = (tid) => {
+  const summary = (tid, m) => {
     let got = 0; let max = 0; let done = 0; let failed = false
     sorted.forEach((c) => {
-      const v = cellPts(c.id, tid)
+      const v = cellPts(c.id, tid, m)
       if (v == null) return
       done++
       got += WEIGHT[c.rank] * v; max += WEIGHT[c.rank] * 2
@@ -87,6 +83,21 @@ export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
     })
     return { failed, total: max ? Math.round((got / max) * 100) : null, done }
   }
+
+  return { me, partner, criteria, sorted, raw, cellPts, isOverride, differ, save, summary, load }
+}
+
+// 比較マトリックス（土地・建物で共通）
+// 行＝評価項目、列＝候補。1列目を固定して横スクロール。
+export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
+  const ev = useEval(ctx, target)
+  const { me, partner, criteria, sorted, raw, isOverride, differ, load } = ev
+  const [mode, setMode] = useState('common') // me | partner | common
+  const [cell, setCell] = useState(null) // { c, cand }
+  const [manage, setManage] = useState(false)
+  const cellPts = (cid, tid, m = mode) => ev.cellPts(cid, tid, m)
+  const summary = (tid) => ev.summary(tid, mode)
+  const save = ev.save
 
   const editRater = mode === 'me' ? me.user_id : mode === 'common' ? 'agreed' : null
 
@@ -311,5 +322,114 @@ function CriteriaSheet({ ctx, target, criteria, reload, onClose }) {
         </section>
       </div>
     </BottomSheet>
+  )
+}
+
+// 物件ごとの評価シート：行＝評価項目、列＝自分／パートナー／共通
+const CYCLE = [null, 3, 2, 1]
+const nextMark = (score) => CYCLE[(CYCLE.indexOf(score ?? null) + 1) % CYCLE.length]
+
+export function EvalSheet({ ctx, target, candidate, onClose }) {
+  const ev = useEval(ctx, target)
+  const { me, partner, sorted, criteria, raw, cellPts, isOverride, differ, save, summary, load } = ev
+  const [manage, setManage] = useState(false)
+  const [memoFor, setMemoFor] = useState(null)
+  const tid = candidate.id
+
+  const cols = [
+    { key: 'me', label: me.display_name, edit: true },
+    { key: 'partner', label: partner?.display_name ?? 'パートナー', edit: false },
+    { key: 'common', label: '共通', edit: true },
+  ]
+  const tap = (c, col) => {
+    if (!col.edit) return
+    const r = col.key === 'me' ? me.user_id : 'agreed'
+    save(c, tid, r, { score: nextMark(raw(c.id, tid, r)?.score) })
+  }
+
+  return (
+    <BottomSheet open title={`評価｜${candidate.name}`} onClose={onClose}>
+      <div className="space-y-3 text-sm">
+        {criteria.length === 0 ? (
+          <p className="rounded-lg bg-stone-50 p-4 text-center text-xs leading-relaxed text-stone-500">
+            評価項目がまだありません。<br />下の「評価項目を編集」から、優先順位を付けた要望を追加してください。
+          </p>
+        ) : (
+          <>
+            <div className="grid grid-cols-[1fr_repeat(3,3.75rem)] items-end gap-1 text-center">
+              <span />
+              {cols.map((col) => {
+                const s = summary(tid, col.key)
+                return (
+                  <div key={col.key} className={`rounded-lg py-1 ${col.key === 'common' ? 'bg-moss/10' : ''}`}>
+                    <p className="truncate text-[10px] text-stone-500">{col.label}</p>
+                    <p className={`text-xl font-black ${s.failed ? 'text-stone-400' : 'text-moss'}`}>{s.total ?? '—'}</p>
+                    <p className="text-[9px] text-stone-400">{s.failed ? 'Mustに✕' : `${s.done}/${sorted.length}`}</p>
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className="divide-y divide-stone-100 rounded-xl border border-stone-200">
+              {sorted.map((c) => {
+                const r = rankOf(c.rank)
+                const warn = differ(c.id, tid) && !isOverride(c.id, tid)
+                const myMemo = raw(c.id, tid, me.user_id)?.memo || ''
+                return (
+                  <div key={c.id} className={warn ? 'bg-amber-50' : ''}>
+                    <div className="grid grid-cols-[1fr_repeat(3,3.75rem)] items-center gap-1 px-2">
+                      <button className="min-w-0 py-2 text-left" onClick={() => setMemoFor(memoFor === c.id ? null : c.id)}>
+                        <span className={`mr-1 rounded px-1 py-0.5 text-[9px] font-bold ${r.cls}`}>{r.label}</span>
+                        <span className="break-all">{c.name}</span>
+                        {myMemo && <span className="ml-1 text-[10px] text-stone-400">✎</span>}
+                      </button>
+                      {cols.map((col) => {
+                        const v = cellPts(c.id, tid, col.key)
+                        const lbl = labelOfPts(v)
+                        const color = lbl === '〇' ? 'text-moss' : lbl === '△' ? 'text-amber-600' : lbl === '✕' ? 'text-rose-600' : 'text-stone-300'
+                        return (
+                          <button key={col.key} disabled={!col.edit}
+                            className={`flex min-h-12 flex-col items-center justify-center rounded-lg ${col.edit ? 'border border-stone-200 bg-white active:bg-stone-100' : ''} ${col.key === 'common' ? 'bg-moss/5' : ''}`}
+                            onClick={() => tap(c, col)}>
+                            <span className={`text-xl font-bold leading-none ${color}`}>{lbl}</span>
+                            {col.key === 'common' && v != null && (
+                              <span className="text-[9px] text-stone-400">{isOverride(c.id, tid) ? '手動' : [me.user_id, partner?.user_id].filter((u) => u && raw(c.id, tid, u)?.score != null).length < 2 ? '1人分' : Number.isInteger(v) ? '平均' : v.toFixed(1)}</span>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    {memoFor === c.id && (
+                      <MemoRow
+                        initial={myMemo}
+                        partnerMemo={partner ? raw(c.id, tid, partner.user_id)?.memo : ''}
+                        partnerName={partner?.display_name}
+                        onSave={(memo) => save(c, tid, me.user_id, { memo })}
+                      />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            <p className="text-[11px] leading-relaxed text-stone-400">
+              マスをタップするたびに 〇 → △ → ✕ → 未評価 と切り替わります。共通は2人の平均で、タップすると手動で上書きできます（未評価に戻すと平均に戻ります）。項目名をタップするとメモを書けます。黄色は2人の評価がちがう項目です。
+            </p>
+          </>
+        )}
+        <button className="min-h-11 w-full rounded-lg border border-stone-300" onClick={() => setManage(true)}>評価項目を編集</button>
+      </div>
+      {manage && <CriteriaSheet ctx={ctx} target={target} criteria={criteria} reload={load} onClose={() => setManage(false)} />}
+    </BottomSheet>
+  )
+}
+
+function MemoRow({ initial, partnerMemo, partnerName, onSave }) {
+  const [memo, setMemo] = useState(initial)
+  return (
+    <div className="space-y-1 px-2 pb-2">
+      <textarea className="min-h-16 w-full rounded-lg border border-stone-300 px-2 py-1 text-xs" placeholder="自分のメモ（理由・気づいたこと）" value={memo}
+        onChange={(e) => setMemo(e.target.value)} onBlur={() => memo !== initial && onSave(memo)} />
+      {partnerMemo && <p className="text-[11px] text-stone-500">{partnerName}のメモ：{partnerMemo}</p>}
+    </div>
   )
 }
