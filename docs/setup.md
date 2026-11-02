@@ -22,15 +22,22 @@
 - Site URL：`https://knak-lab.github.io/homest/`
 - Redirect URLs に追加：`https://knak-lab.github.io/homest/**`
 
-### 3-2. ログインメールにコードを載せる
-**Authentication → Emails（Email Templates）** で、次の2つのテンプレートの本文に1行追加して保存する
-- **Magic Link**（2回目以降のログイン）
-- **Confirm signup**（初めてのログイン。パートナーの初回など）
+### 3-2. Googleログインを有効にする
+**Google Cloud Console（console.cloud.google.com）**
+1. 上部のプロジェクト選択 →「新しいプロジェクト」→ 名前 `homest` で作成
+2. 「APIとサービス」→「OAuth 同意画面」（Google Auth Platform）→ 開始
+   - アプリ名：homest／サポートメール：自分
+   - 対象：**外部**
+   - 「対象」→ テストユーザーに **自分とパートナーのGmail** を追加
+3. 「クライアント」→「クライアントを作成」
+   - 種類：**ウェブアプリケーション**
+   - 承認済みの JavaScript 生成元：`https://knak-lab.github.io`
+   - 承認済みのリダイレクト URI：`https://ordauymxhlvzkthiqexg.supabase.co/auth/v1/callback`
+4. 表示される **クライアントID** と **クライアントシークレット** を控える（チャットには貼らない）
 
-追加する行：
-```
-ログインコード：{{ .Token }}
-```
+**Supabase**
+5. **Authentication → Sign In / Providers → Google** を開いて有効にする
+6. Client ID と Client Secret を貼り付けて Save
 
 ### 4. 接続情報を確認する
 **Project Settings → API Keys**（または Data API）で、次の2つを確認する

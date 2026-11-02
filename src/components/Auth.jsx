@@ -10,6 +10,17 @@ export function Login() {
     authErrorFromUrl ? 'ログインリンクが使えませんでした（期限切れ・使用済みの可能性）。下からもう一度送ってください。' : '',
   )
 
+  const [showEmail, setShowEmail] = useState(false)
+
+  const google = async () => {
+    setBusy(true)
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.origin + window.location.pathname + window.location.search },
+    })
+    if (error) { setBusy(false); alert(error.message) }
+  }
+
   const send = async () => {
     const e = email.trim()
     if (!e) return
@@ -65,16 +76,25 @@ export function Login() {
         </div>
       ) : (
         <div className="space-y-3">
-          <input
-            className="w-full rounded-lg border border-stone-300 px-3 py-3"
-            type="email"
-            placeholder="メールアドレス"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-          <button disabled={busy} className="min-h-12 w-full rounded-lg bg-moss font-bold text-white disabled:opacity-40" onClick={send}>
-            ログイン用メールを送る
+          <button disabled={busy} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-stone-300 bg-white font-bold disabled:opacity-40" onClick={google}>
+            <span className="text-lg">G</span> Googleでログイン
           </button>
+          {!showEmail ? (
+            <button className="min-h-11 w-full text-xs text-stone-500 underline" onClick={() => setShowEmail(true)}>メールで受け取る（予備）</button>
+          ) : (
+            <>
+              <input
+                className="w-full rounded-lg border border-stone-300 px-3 py-3"
+                type="email"
+                placeholder="メールアドレス"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              <button disabled={busy} className="min-h-12 w-full rounded-lg bg-stone-700 text-sm text-white disabled:opacity-40" onClick={send}>
+                ログイン用メールを送る
+              </button>
+            </>
+          )}
         </div>
       )}
     </Shell>
