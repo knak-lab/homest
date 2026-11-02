@@ -63,9 +63,9 @@ function WishNode({ data }) {
       <Handle type="source" position={Position.Top} style={hiddenHandle} isConnectable={false} />
       {creatorColor && !isRoot && <span className="absolute -top-1 -left-1 h-2.5 w-2.5 rounded-full border border-white" style={{ background: creatorColor }} />}
       <span className="break-words whitespace-pre-wrap">{wish.title || '（無題）'}</span>
-      {(wish.in_priority || attachCount > 0) && (
+      {(wish.in_priority || attachCount > 0 || wish.note) && (
         <span className="mt-0.5 block text-[10px] text-stone-500">
-          {wish.in_priority && '⭐'}{attachCount > 0 && ` 📎${attachCount}`}
+          {wish.in_priority && '⭐'}{wish.note && ' 📝'}{attachCount > 0 && ` 📎${attachCount}`}
         </span>
       )}
       {hiddenCount > 0 && (
@@ -294,6 +294,9 @@ function MindMapInner({ ctx }) {
       {sel && (
         <div className="absolute inset-x-2 bottom-2 rounded-2xl bg-white p-2 shadow-lg">
           <p className="truncate px-2 pb-1 text-xs text-stone-500">{sel.title || '（無題）'}</p>
+          {(sel.note || attachCounts[sel.id] > 0) && (
+            <NodePreview wish={sel} count={attachCounts[sel.id] || 0} onEdit={() => setEditId(sel.id)} />
+          )}
           <div className="grid grid-cols-5 gap-1 text-[11px]">
             <ActionBtn icon="＋" label="子を追加" onClick={() => setAddParentId(sel.id)} />
             <ActionBtn icon="✎" label="編集" onClick={() => setEditId(sel.id)} />
@@ -321,6 +324,68 @@ function MindMapInner({ ctx }) {
           onDelete={() => removeWish(editId)}
           onClose={() => setEditId(null)}
         />
+      )}
+    </div>
+  )
+}
+
+// 選択中ノードのメモ・画像・リンクをちらっと見せる
+function NodePreview({ wish, count, onEdit }) {
+  const [items, setItems] = useState([])
+  const [urls, setUrls] = useState({})
+  const [big, setBig] = useState(null)
+
+  useEffect(() => {
+    let alive = true
+    setItems([]); setUrls({})
+    if (!count) return
+    ;(async () => {
+      const { data } = await supabase.from('attachments').select('*').eq('target_type', 'wish').eq('target_id', wish.id).order('created_at')
+      if (!alive || !data) return
+      setItems(data)
+      const paths = data.filter((a) => a.kind === 'image').map((a) => a.storage_path)
+      if (paths.length) {
+        const { data: signed } = await supabase.storage.from('attachments').createSignedUrls(paths, 3600)
+        if (alive) setUrls(Object.fromEntries((signed || []).map((x) => [x.path, x.signedUrl])))
+      }
+    })()
+    return () => { alive = false }
+  }, [wish.id, count])
+
+  const images = items.filter((a) => a.kind === 'image')
+  const links = items.filter((a) => a.kind === 'link')
+  const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, '') } catch { return u } }
+
+  return (
+    <div className="mb-1 space-y-1.5 border-b border-stone-100 px-2 pb-2">
+      {wish.note && (
+        <button className="block w-full text-left text-xs leading-relaxed text-stone-700" onClick={onEdit}>
+          <span className="line-clamp-2 whitespace-pre-wrap">📝 {wish.note}</span>
+        </button>
+      )}
+      {images.length > 0 && (
+        <div className="flex gap-1.5 overflow-x-auto">
+          {images.map((a) => (
+            <button key={a.id} className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-stone-100" onClick={() => setBig(a)}>
+              {urls[a.storage_path] && <img src={urls[a.storage_path]} alt={a.caption} className="h-full w-full object-cover" />}
+            </button>
+          ))}
+        </div>
+      )}
+      {links.length > 0 && (
+        <div className="flex gap-1.5 overflow-x-auto">
+          {links.map((a) => (
+            <a key={a.id} href={a.url} target="_blank" rel="noreferrer" className="max-w-40 shrink-0 truncate rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-blue-700">
+              🔗 {a.caption || host(a.url)}
+            </a>
+          ))}
+        </div>
+      )}
+      {big && (
+        <div className="fixed inset-0 z-[60] flex flex-col bg-black/90" onClick={() => setBig(null)}>
+          <div className="flex justify-between p-3 text-sm text-white"><span>{big.caption}</span><button>閉じる</button></div>
+          <img src={urls[big.storage_path]} alt="" className="m-auto max-h-[85vh] max-w-full object-contain" />
+        </div>
       )}
     </div>
   )
