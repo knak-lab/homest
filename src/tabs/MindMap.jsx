@@ -40,8 +40,13 @@ export function parseOutline(text) {
     const title = m[2].replace(/^([-*・•●○◯▶▷→]|\d+[.)．、])\s*/, '').trim()
     return { indent: m[1].length, title }
   }).filter((l) => l.title)
-  const widths = [...new Set(lines.map((l) => l.indent))].sort((a, b) => a - b)
-  return lines.map((l) => ({ depth: widths.indexOf(l.indent), title: l.title }))
+  // 字下げ幅がバラついても、前の行より深いか浅いかで階層を決める
+  const stack = []
+  return lines.map((l) => {
+    while (stack.length && l.indent < stack[stack.length - 1]) stack.pop()
+    if (!stack.length || l.indent > stack[stack.length - 1]) stack.push(l.indent)
+    return { depth: stack.length - 1, title: l.title }
+  })
 }
 
 // ───────── ノードとエッジの見た目 ─────────
