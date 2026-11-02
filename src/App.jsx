@@ -4,6 +4,7 @@ import { Login, HouseholdSetup } from './components/Auth'
 import BottomSheet from './components/BottomSheet'
 import MindMap from './tabs/MindMap'
 import Priority from './tabs/Priority'
+import Lands from './tabs/Lands'
 
 const TABS = [
   { id: 'mindmap', label: '暮らし', icon: '🌱' },
@@ -59,10 +60,9 @@ export default function App() {
       <main className="relative min-h-0 flex-1">
         {tab === 'mindmap' && <MindMap ctx={ctx} />}
         {tab === 'priority' && <Priority ctx={ctx} />}
-        {(tab === 'land' || tab === 'builder') && (
-          <div className="flex h-full items-center justify-center text-sm text-stone-400">
-            {tab === 'land' ? '土地' : '建物'}は Phase {tab === 'land' ? 2 : 3} で作ります
-          </div>
+        {tab === 'land' && <Lands ctx={ctx} />}
+        {tab === 'builder' && (
+          <div className="flex h-full items-center justify-center text-sm text-stone-400">建物は Phase 3 で作ります</div>
         )}
       </main>
 
