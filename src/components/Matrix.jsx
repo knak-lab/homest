@@ -179,7 +179,7 @@ export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
                     <td colSpan={candidates.length + 1} className="sticky left-0 border-b border-stone-200 bg-stone-50 p-0">
                       <button disabled={gid === 'must'} className="sticky left-0 flex min-h-9 items-center gap-2 px-2 text-left" onClick={() => setOpen((o) => ({ ...o, [gid]: !o[gid] }))}>
                         <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${rankOf(gid).cls}`}>{rankOf(gid).label}</span>
-                        <span className="text-[11px] text-stone-500">{list.length}項目{gid !== 'must' && (isOpen ? '　▾ 閉じる' : '　▸ 開く')}</span>
+                        <span className="text-[11px] text-stone-500">{list.length}項目{gid !== 'must' && (isOpen ? '　▾ たたむ' : '　▸ 開く')}</span>
                       </button>
                     </td>
                   </tr>,
@@ -382,7 +382,7 @@ export function EvalSheet({ ctx, target, candidate, onClose }) {
                   <button disabled={g.id === 'must'} className="mb-1 flex min-h-9 w-full items-center gap-2 text-left" onClick={() => setOpen((o) => ({ ...o, [g.id]: !o[g.id] }))}>
                     <span className={`rounded px-2 py-0.5 text-xs font-bold ${rankOf(g.id).cls}`}>{rankOf(g.id).label}</span>
                     <span className="text-xs text-stone-500">{list.length}項目・自分の評価 {done}/{list.length}</span>
-                    {g.id !== 'must' && <span className="ml-auto text-xs text-stone-500">{isOpen ? '▾ 閉じる' : '▸ 開く'}</span>}
+                    {g.id !== 'must' && <span className="ml-auto text-xs text-stone-500">{isOpen ? '▾ たたむ' : '▸ 開く'}</span>}
                   </button>
                   {isOpen && (
                     <div className="divide-y divide-stone-100 rounded-xl border border-stone-200">

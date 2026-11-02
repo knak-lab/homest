@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import BottomSheet from '../components/BottomSheet'
 import Attachments from '../components/Attachments'
-import Matrix, { EvalSheet } from '../components/Matrix'
+import Matrix, { EvalSheet, useEval } from '../components/Matrix'
 
 export const LAND_STATUS = ['検討中', '見学予定', '見学済', '申込検討', '見送り']
 const STATUS_CLS = {
@@ -21,6 +21,7 @@ export default function Lands({ ctx }) {
   const [openId, setOpenId] = useState(null) // 'new' or id
   const [manage, setManage] = useState(null) // 'area' | 'agency' | null
   const [showRejected, setShowRejected] = useState(false)
+  const ev = useEval(ctx, 'land')
 
   const load = useCallback(async () => {
     const [l, a, g, img] = await Promise.all([
@@ -40,6 +41,8 @@ export default function Lands({ ctx }) {
       setThumbs(Object.fromEntries(Object.entries(first).map(([id, p]) => [id, byPath[p]])))
     } else setThumbs({})
   }, [hid])
+
+  const reloadAll = () => { load(); ev.load() }
 
   useEffect(() => {
     load()
@@ -102,6 +105,19 @@ export default function Lands({ ctx }) {
                         </p>
                         <span className={`mt-1 inline-block rounded px-1.5 py-0.5 text-[10px] ${STATUS_CLS[l.status] || STATUS_CLS['検討中']}`}>{l.status}</span>
                       </div>
+                      {ev.criteria.length > 0 && (
+                        <div className="flex shrink-0 gap-1 self-center">
+                          {[['common', '共通'], ['me', '自分'], ['partner', ctx.members.find((m) => m.user_id !== ctx.me.user_id)?.display_name ?? 'パートナー']].map(([m, lbl]) => {
+                            const s = ev.summary(l.id, m)
+                            return (
+                              <div key={m} className={`w-11 rounded-lg py-1 text-center ${m === 'common' ? 'bg-moss/10' : 'bg-stone-50'}`}>
+                                <p className="truncate px-0.5 text-[9px] text-stone-500">{lbl}</p>
+                                <p className={`text-base leading-tight font-black ${s.failed ? 'text-stone-400' : m === 'common' ? 'text-moss' : 'text-stone-700'}`}>{s.failed ? '✕' : s.total ?? '—'}</p>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
                     </button>
                   ))}
                   {g.items.length === 0 && <p className="text-xs text-stone-400">候補地なし</p>}
@@ -128,8 +144,8 @@ export default function Lands({ ctx }) {
           ctx={ctx}
           land={openId === 'new' ? null : lands.find((l) => l.id === openId)}
           areas={areas} agencies={agencies}
-          reload={load}
-          onClose={() => setOpenId(null)}
+          reload={reloadAll}
+          onClose={() => { setOpenId(null); ev.load() }}
         />
       )}
       {manage && <GroupSheet ctx={ctx} kind={manage} rows={manage === 'area' ? areas : agencies} reload={load} onClose={() => setManage(null)} />}
