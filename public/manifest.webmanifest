@@ -7,7 +7,7 @@
   "scope": "/homest/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#f5f1ea",
+  "background_color": "#fcf7ed",
   "theme_color": "#f5f1ea",
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
