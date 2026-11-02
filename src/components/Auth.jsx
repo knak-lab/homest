@@ -7,7 +7,7 @@ export function Login() {
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState(
-    authErrorFromUrl ? 'ログインリンクが使えませんでした（期限切れ・使用済みの可能性）。下からもう一度送ってください。' : '',
+    authErrorFromUrl ? `ログインできませんでした。もう一度お試しください。\n（詳細：${decodeURIComponent(authErrorFromUrl.replace(/\+/g, ' '))}）` : '',
   )
 
   const [showEmail, setShowEmail] = useState(false)
@@ -48,7 +48,7 @@ export function Login() {
 
   return (
     <Shell>
-      {notice && <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">{notice}</p>}
+      {notice && <p className="mb-3 whitespace-pre-wrap break-all rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">{notice}</p>}
       {sent ? (
         <div className="space-y-3">
           <p className="text-sm leading-relaxed">
