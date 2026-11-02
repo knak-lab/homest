@@ -22,17 +22,49 @@ export function useEval(ctx, target) {
   const [criteria, setCriteria] = useState([])
   const [scores, setScores] = useState({})
 
+  // 優先順位を付けた要望（合意 → 自分 → パートナーの順で採用）を、評価項目として自動で用意する
   const load = useCallback(async () => {
-    const [c, s] = await Promise.all([
+    const [c, s, w, r] = await Promise.all([
       supabase.from('criteria').select('*').eq('household_id', hid).eq('target', target).order('sort').order('created_at'),
       supabase.from('scores').select('*').eq('household_id', hid),
+      supabase.from('wishes').select('id,title').eq('household_id', hid).eq('in_priority', true),
+      supabase.from('ratings').select('target_id,rater,rank').eq('household_id', hid).eq('target_type', 'wish'),
     ])
     if (c.error) return alert(c.error.message)
-    setCriteria(c.data)
+    const rk = {}; r.data?.forEach((x) => { rk[`${x.target_id}|${x.rater}`] = x.rank })
+    const rankFor = (wid) => rk[`${wid}|agreed`] || rk[`${wid}|${me.user_id}`] || (partner ? rk[`${wid}|${partner.user_id}`] : null) || null
+    let rows = c.data
+    const byWish = {}
+    rows.forEach((x) => { if (x.wish_id && !byWish[x.wish_id]) byWish[x.wish_id] = x })
+    const inserts = []; const updates = []
+    ;(w.data || []).forEach((wish, i) => {
+      const rank = rankFor(wish.id)
+      if (!rank) return
+      const ex = byWish[wish.id]
+      if (!ex) inserts.push({ household_id: hid, target, name: wish.title, wish_id: wish.id, rank, sort: 1000 + i })
+      else if (ex.rank !== rank || ex.name !== wish.title) updates.push({ id: ex.id, rank, name: wish.title })
+    })
+    if (inserts.length) {
+      const { data } = await supabase.from('criteria').insert(inserts).select()
+      rows = [...rows, ...(data || [])]
+    }
+    for (const u of updates) {
+      await supabase.from('criteria').update({ rank: u.rank, name: u.name }).eq('id', u.id)
+      rows = rows.map((x) => (x.id === u.id ? { ...x, rank: u.rank, name: u.name } : x))
+    }
+    // 優先順位から外した要望や、未分類に戻した要望の項目は表示しない（点数は残す）
+    const active = new Set((w.data || []).filter((wish) => rankFor(wish.id)).map((wish) => wish.id))
+    const seen = new Set()
+    rows = rows.filter((x) => {
+      if (!x.wish_id) return true
+      if (!active.has(x.wish_id) || seen.has(x.wish_id)) return false
+      seen.add(x.wish_id); return true
+    })
+    setCriteria(rows)
     const map = {}
     s.data?.forEach((x) => { map[`${x.criteria_id}|${x.target_id}|${x.rater}`] = x })
     setScores(map)
-  }, [hid, target])
+  }, [hid, target, me.user_id, partner?.user_id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load() }, [load])
 
@@ -95,6 +127,7 @@ export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
   const [mode, setMode] = useState('common') // me | partner | common
   const [cell, setCell] = useState(null) // { c, cand }
   const [manage, setManage] = useState(false)
+  const [open, setOpen] = useState({ want: false, nice: false })
   const cellPts = (cid, tid, m = mode) => ev.cellPts(cid, tid, m)
   const summary = (tid) => ev.summary(tid, mode)
   const save = ev.save
@@ -112,7 +145,7 @@ export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
 
       {criteria.length === 0 ? (
         <div className="p-6 text-center text-sm leading-relaxed text-stone-500">
-          評価項目がまだありません。<br />右上の「項目」から、優先順位を付けた要望を<br />比較の項目として追加できます。
+          評価項目がまだありません。<br />優先順位タブで要望に Must／Want／Nice を付けると、<br />ここに自動で並びます。
         </div>
       ) : candidates.length === 0 ? (
         <p className="p-6 text-center text-sm text-stone-500">比べる候補がまだありません。</p>
@@ -137,12 +170,23 @@ export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
               </tr>
             </thead>
             <tbody>
-              {sorted.map((c) => {
-                const r = rankOf(c.rank)
+              {['must', 'want', 'nice'].map((gid) => {
+                const list = sorted.filter((c) => c.rank === gid)
+                if (!list.length) return null
+                const isOpen = gid === 'must' || open[gid]
+                return [
+                  <tr key={`h-${gid}`}>
+                    <td colSpan={candidates.length + 1} className="sticky left-0 border-b border-stone-200 bg-stone-50 p-0">
+                      <button disabled={gid === 'must'} className="sticky left-0 flex min-h-9 items-center gap-2 px-2 text-left" onClick={() => setOpen((o) => ({ ...o, [gid]: !o[gid] }))}>
+                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${rankOf(gid).cls}`}>{rankOf(gid).label}</span>
+                        <span className="text-[11px] text-stone-500">{list.length}項目{gid !== 'must' && (isOpen ? '　▾ 閉じる' : '　▸ 開く')}</span>
+                      </button>
+                    </td>
+                  </tr>,
+                  ...(isOpen ? list.map((c) => {
                 return (
                   <tr key={c.id}>
                     <td className="sticky left-0 z-10 border-b border-stone-100 bg-white p-2">
-                      <span className={`mr-1 rounded px-1 py-0.5 text-[9px] font-bold ${r.cls}`}>{r.label}</span>
                       <span className="break-all">{c.name}</span>
                     </td>
                     {candidates.map((cand) => {
@@ -164,6 +208,8 @@ export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
                     })}
                   </tr>
                 )
+              }) : []),
+                ]
               })}
             </tbody>
           </table>
@@ -232,24 +278,8 @@ function CellSheet({ ctx, partner, c, cand, mode, editRater, raw, cellPts, onSav
 // 評価項目の管理：要望（優先順位）から追加／手動追加／削除
 function CriteriaSheet({ ctx, target, criteria, reload, onClose }) {
   const hid = ctx.household.id
-  const [wishes, setWishes] = useState([])
-  const [ratings, setRatings] = useState({})
   const [name, setName] = useState('')
   const [rank, setRank] = useState('want')
-
-  useEffect(() => {
-    (async () => {
-      const [w, r] = await Promise.all([
-        supabase.from('wishes').select('id,title,parent_id,in_priority').eq('household_id', hid).eq('in_priority', true),
-        supabase.from('ratings').select('*').eq('household_id', hid).eq('target_type', 'wish'),
-      ])
-      setWishes(w.data || [])
-      const m = {}; r.data?.forEach((x) => { m[`${x.target_id}|${x.rater}`] = x.rank }); setRatings(m)
-    })()
-  }, [hid])
-
-  const used = new Set(criteria.map((c) => c.wish_id).filter(Boolean))
-  const rankFor = (wid) => ratings[`${wid}|agreed`] || ratings[`${wid}|${ctx.me.user_id}`] || 'want'
 
   const add = async (values) => {
     const { error } = await supabase.from('criteria').insert({ household_id: hid, target, sort: criteria.length, ...values })
@@ -261,22 +291,14 @@ function CriteriaSheet({ ctx, target, criteria, reload, onClose }) {
     if (!confirm(`「${c.name}」を評価項目から外しますか？（付けた点数も消えます）`)) return
     await supabase.from('criteria').delete().eq('id', c.id); reload()
   }
-  const addAllAgreed = async () => {
-    const list = wishes.filter((w) => !used.has(w.id) && ratings[`${w.id}|agreed`])
-    if (!list.length) return alert('追加できる「合意済み」の要望はありません')
-    const { error } = await supabase.from('criteria').insert(list.map((w, i) => ({ household_id: hid, target, name: w.title, wish_id: w.id, rank: ratings[`${w.id}|agreed`], sort: criteria.length + i })))
-    if (error) return alert(error.message)
-    reload()
-  }
-
   return (
-    <BottomSheet open title="評価項目" onClose={onClose}>
+    <BottomSheet open title="要望以外の項目" onClose={onClose}>
       <div className="space-y-5 text-sm">
         <section>
-          <p className="mb-2 font-bold">今の項目（{criteria.length}）</p>
-          {criteria.length === 0 && <p className="text-xs text-stone-400">まだありません</p>}
+          <p className="mb-1 font-bold">要望以外の項目（{criteria.filter((c) => !c.wish_id).length}）</p>
+          <p className="mb-2 text-[11px] text-stone-400">優先順位を付けた要望は自動で並びます。ここでは「駅までの距離」など、要望にない項目だけを追加できます。</p>
           <ul className="space-y-1.5">
-            {criteria.map((c) => (
+            {criteria.filter((c) => !c.wish_id).map((c) => (
               <li key={c.id} className="flex items-center gap-2 rounded-lg bg-stone-50 px-2 py-1.5">
                 <span className="min-w-0 flex-1 truncate">{c.name}</span>
                 <select className="rounded border border-stone-300 bg-white px-1 py-1 text-xs" value={c.rank} onChange={(e) => update(c, { rank: e.target.value })}>
@@ -285,28 +307,6 @@ function CriteriaSheet({ ctx, target, criteria, reload, onClose }) {
                 <button className="px-2 text-stone-400" onClick={() => remove(c)}>✕</button>
               </li>
             ))}
-          </ul>
-        </section>
-
-        <section>
-          <div className="mb-2 flex items-center justify-between">
-            <p className="font-bold">要望から追加</p>
-            <button className="rounded-lg border border-moss px-2 py-1 text-xs text-moss" onClick={addAllAgreed}>合意済みをまとめて追加</button>
-          </div>
-          {wishes.filter((w) => !used.has(w.id)).length === 0 && <p className="text-xs text-stone-400">追加できる要望はありません（暮らしタブで「⭐優先順位に載せる」をオンにした要望が出てきます）</p>}
-          <ul className="space-y-1.5">
-            {wishes.filter((w) => !used.has(w.id)).map((w) => {
-              const r = rankOf(rankFor(w.id))
-              return (
-                <li key={w.id}>
-                  <button className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-stone-200 px-2 text-left" onClick={() => add({ name: w.title, wish_id: w.id, rank: rankFor(w.id) })}>
-                    <span className={`rounded px-1 py-0.5 text-[9px] font-bold ${r.cls}`}>{r.label}</span>
-                    <span className="min-w-0 flex-1 truncate">{w.title}</span>
-                    <span className="text-moss">＋</span>
-                  </button>
-                </li>
-              )
-            })}
           </ul>
         </section>
 
@@ -326,6 +326,7 @@ function CriteriaSheet({ ctx, target, criteria, reload, onClose }) {
 }
 
 // 物件ごとの評価シート：行＝評価項目、列＝自分／パートナー／共通
+const GROUPS = [{ id: 'must' }, { id: 'want' }, { id: 'nice' }]
 const CYCLE = [null, 3, 2, 1]
 const nextMark = (score) => CYCLE[(CYCLE.indexOf(score ?? null) + 1) % CYCLE.length]
 
@@ -334,6 +335,7 @@ export function EvalSheet({ ctx, target, candidate, onClose }) {
   const { me, partner, sorted, criteria, raw, cellPts, isOverride, differ, save, summary, load } = ev
   const [manage, setManage] = useState(false)
   const [memoFor, setMemoFor] = useState(null)
+  const [open, setOpen] = useState({ want: false, nice: false })
   const tid = candidate.id
 
   const cols = [
@@ -352,7 +354,7 @@ export function EvalSheet({ ctx, target, candidate, onClose }) {
       <div className="space-y-3 text-sm">
         {criteria.length === 0 ? (
           <p className="rounded-lg bg-stone-50 p-4 text-center text-xs leading-relaxed text-stone-500">
-            評価項目がまだありません。<br />下の「評価項目を編集」から、優先順位を付けた要望を追加してください。
+            評価項目がまだありません。<br />優先順位タブで要望に Must／Want／Nice を付けると、ここに自動で並びます。
           </p>
         ) : (
           <>
@@ -370,16 +372,27 @@ export function EvalSheet({ ctx, target, candidate, onClose }) {
               })}
             </div>
 
-            <div className="divide-y divide-stone-100 rounded-xl border border-stone-200">
-              {sorted.map((c) => {
-                const r = rankOf(c.rank)
+            {GROUPS.map((g) => {
+              const list = sorted.filter((c) => c.rank === g.id)
+              if (!list.length) return null
+              const isOpen = g.id === 'must' || open[g.id]
+              const done = list.filter((c) => raw(c.id, tid, me.user_id)?.score != null).length
+              return (
+                <section key={g.id}>
+                  <button disabled={g.id === 'must'} className="mb-1 flex min-h-9 w-full items-center gap-2 text-left" onClick={() => setOpen((o) => ({ ...o, [g.id]: !o[g.id] }))}>
+                    <span className={`rounded px-2 py-0.5 text-xs font-bold ${rankOf(g.id).cls}`}>{rankOf(g.id).label}</span>
+                    <span className="text-xs text-stone-500">{list.length}項目・自分の評価 {done}/{list.length}</span>
+                    {g.id !== 'must' && <span className="ml-auto text-xs text-stone-500">{isOpen ? '▾ 閉じる' : '▸ 開く'}</span>}
+                  </button>
+                  {isOpen && (
+                    <div className="divide-y divide-stone-100 rounded-xl border border-stone-200">
+                      {list.map((c) => {
                 const warn = differ(c.id, tid) && !isOverride(c.id, tid)
                 const myMemo = raw(c.id, tid, me.user_id)?.memo || ''
                 return (
                   <div key={c.id} className={warn ? 'bg-amber-50' : ''}>
                     <div className="grid grid-cols-[1fr_repeat(3,3.75rem)] items-center gap-1 px-2">
                       <button className="min-w-0 py-2 text-left" onClick={() => setMemoFor(memoFor === c.id ? null : c.id)}>
-                        <span className={`mr-1 rounded px-1 py-0.5 text-[9px] font-bold ${r.cls}`}>{r.label}</span>
                         <span className="break-all">{c.name}</span>
                         {myMemo && <span className="ml-1 text-[10px] text-stone-400">✎</span>}
                       </button>
@@ -410,13 +423,17 @@ export function EvalSheet({ ctx, target, candidate, onClose }) {
                   </div>
                 )
               })}
-            </div>
+                    </div>
+                  )}
+                </section>
+              )
+            })}
             <p className="text-[11px] leading-relaxed text-stone-400">
               マスをタップするたびに 〇 → △ → ✕ → 未評価 と切り替わります。共通は2人の平均で、タップすると手動で上書きできます（未評価に戻すと平均に戻ります）。項目名をタップするとメモを書けます。黄色は2人の評価がちがう項目です。
             </p>
           </>
         )}
-        <button className="min-h-11 w-full rounded-lg border border-stone-300" onClick={() => setManage(true)}>評価項目を編集</button>
+        <button className="min-h-11 w-full rounded-lg border border-stone-300 text-xs text-stone-600" onClick={() => setManage(true)}>要望以外の項目を追加（任意）</button>
       </div>
       {manage && <CriteriaSheet ctx={ctx} target={target} criteria={criteria} reload={load} onClose={() => setManage(false)} />}
     </BottomSheet>
