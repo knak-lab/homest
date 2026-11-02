@@ -149,7 +149,10 @@ export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
           評価項目がまだありません。<br />優先順位タブで要望に Must／Want／Nice を付けると、<br />ここに自動で並びます。
         </div>
       ) : candidates.length === 0 ? (
-        <p className="p-6 text-center text-sm text-stone-500">比べる候補がまだありません。</p>
+        <div className="space-y-4 p-6 text-center">
+          <p className="text-sm text-stone-500">比べる候補がまだありません。</p>
+          <button className="min-h-11 w-full rounded-lg border border-stone-300 bg-white text-xs text-stone-600" onClick={() => setManage(true)}>評価項目の設定（使わない項目・追加）</button>
+        </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-auto">
           <table className="border-separate border-spacing-0 text-xs">
@@ -218,6 +221,9 @@ export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
             〇＝2点・△＝1点・✕＝0点。重みはMust 5／Want 3／Nice 1で、評価済みの項目を100点満点に換算します。Mustに✕があると列がグレーになります。
             {mode === 'common' && ' 共通は2人の平均（タップで手動の上書きも可）。黄色は2人の評価がちがうところです。'}
           </p>
+          <div className="px-3 pb-6">
+            <button className="min-h-11 w-full rounded-lg border border-stone-300 bg-white text-xs text-stone-600" onClick={() => setManage(true)}>評価項目の設定（使わない項目・追加）</button>
+          </div>
         </div>
       )}
 
