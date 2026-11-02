@@ -32,6 +32,18 @@ function placeChild(parent, wishes) {
   return { x: parent.x + R * Math.cos(angle), y: parent.y + R * Math.sin(angle) }
 }
 
+// ───────── 箇条書き（インデント）テキストの読み取り ─────────
+// 例：「薪ストーブ」「  ・リビングの中心」のように、字下げで親子を表す
+export function parseOutline(text) {
+  const lines = text.split(/\r?\n/).map((raw) => {
+    const m = raw.replace(/\t/g, '    ').replace(/\u3000/g, '  ').match(/^(\s*)(.*)$/)
+    const title = m[2].replace(/^([-*・•●○◯▶▷→]|\d+[.)．、])\s*/, '').trim()
+    return { indent: m[1].length, title }
+  }).filter((l) => l.title)
+  const widths = [...new Set(lines.map((l) => l.indent))].sort((a, b) => a - b)
+  return lines.map((l) => ({ depth: widths.indexOf(l.indent), title: l.title }))
+}
+
 // ───────── ノードとエッジの見た目 ─────────
 const hiddenHandle = { top: '50%', left: '50%', opacity: 0, pointerEvents: 'none', width: 1, height: 1, minWidth: 0, minHeight: 0, border: 0 }
 
@@ -175,6 +187,32 @@ function MindMapInner({ ctx }) {
     if (parent.collapsed) patch(parentId, { collapsed: false })
   }
 
+  // インデント付きテキストからまとめて追加（OCR結果の貼り付け用）
+  const addBulk = async (parentId, text) => {
+    const rows = parseOutline(text)
+    if (!rows.length) return 0
+    let local = [...wishes]
+    const stack = [parentId]
+    let count = 0
+    for (const { depth, title } of rows) {
+      const pid = stack[Math.min(depth, stack.length - 1)]
+      const parent = local.find((w) => w.id === pid)
+      const pos = placeChild(parent, local)
+      const { data, error } = await supabase.from('wishes')
+        .insert({ household_id: hid, parent_id: pid, title, ...pos })
+        .select().single()
+      if (error) { alert(error.message); break }
+      local = [...local, data]
+      stack.length = Math.min(depth, stack.length - 1) + 1
+      stack.push(data.id)
+      count++
+    }
+    setWishes(local)
+    if (byId[parentId]?.collapsed) patch(parentId, { collapsed: false })
+    setTimeout(() => fitView({ padding: 0.3, duration: 300 }), 100)
+    return count
+  }
+
   const removeWish = async (id) => {
     const ids = [id, ...descendants(id)]
     const msg = ids.length > 1 ? `「${byId[id].title}」と、その下の ${ids.length - 1} 個もまとめて削除します。よろしいですか？` : `「${byId[id].title}」を削除しますか？`
@@ -248,7 +286,7 @@ function MindMapInner({ ctx }) {
       )}
 
       {addParentId && (
-        <AddSheet parent={byId[addParentId]} onAdd={(t) => addChild(addParentId, t)} onClose={() => setAddParentId(null)} />
+        <AddSheet parent={byId[addParentId]} onAdd={(t) => addChild(addParentId, t)} onBulk={(txt) => addBulk(addParentId, txt)} onClose={() => setAddParentId(null)} />
       )}
       {editId && byId[editId] && (
         <EditSheet
@@ -273,8 +311,11 @@ function ActionBtn({ icon, label, onClick, disabled }) {
 }
 
 // 続けてどんどん追加できるシート（ブレスト向け）
-function AddSheet({ parent, onAdd, onClose }) {
+function AddSheet({ parent, onAdd, onBulk, onClose }) {
+  const [mode, setMode] = useState('one') // one | bulk
   const [title, setTitle] = useState('')
+  const [bulk, setBulk] = useState('')
+  const [busy, setBusy] = useState(false)
   const [added, setAdded] = useState([])
   const submit = async () => {
     const t = title.trim()
@@ -283,21 +324,53 @@ function AddSheet({ parent, onAdd, onClose }) {
     setAdded((a) => [...a, t])
     await onAdd(t)
   }
+  const submitBulk = async () => {
+    const n = parseOutline(bulk).length
+    if (!n) return
+    if (!confirm(`${n} 個のノードを「${parent.title}」の下に追加します`)) return
+    setBusy(true)
+    const done = await onBulk(bulk)
+    setBusy(false)
+    alert(`${done} 個追加しました`)
+    onClose()
+  }
   return (
     <BottomSheet open title={`「${parent.title}」に追加`} onClose={onClose}>
-      <div className="flex gap-2">
-        <input
-          autoFocus
-          className="min-w-0 flex-1 rounded-lg border border-stone-300 px-3 py-3"
-          placeholder="やりたいこと・アイデア"
-          value={title}
-          enterKeyHint="send"
-          onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit() }}
-        />
-        <button className="min-h-12 rounded-lg bg-moss px-4 font-bold text-white" onClick={submit}>追加</button>
+      <div className="mb-3 grid grid-cols-2 rounded-lg bg-stone-200 p-1 text-sm">
+        {[['one', '1つずつ'], ['bulk', 'まとめて貼り付け']].map(([m, l]) => (
+          <button key={m} className={`min-h-10 rounded-md ${mode === m ? 'bg-white font-bold shadow' : ''}`} onClick={() => setMode(m)}>{l}</button>
+        ))}
       </div>
-      {added.length > 0 && <p className="mt-3 text-xs text-stone-500">追加済み：{added.join('、')}</p>}
+      {mode === 'one' ? (
+        <>
+          <div className="flex gap-2">
+            <input
+              autoFocus
+              className="min-w-0 flex-1 rounded-lg border border-stone-300 px-3 py-3"
+              placeholder="やりたいこと・アイデア"
+              value={title}
+              enterKeyHint="send"
+              onChange={(e) => setTitle(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit() }}
+            />
+            <button className="min-h-12 rounded-lg bg-moss px-4 font-bold text-white" onClick={submit}>追加</button>
+          </div>
+          {added.length > 0 && <p className="mt-3 text-xs text-stone-500">追加済み：{added.join('、')}</p>}
+        </>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-xs leading-relaxed text-stone-500">1行に1つ。字下げ（スペース）で親子になります。</p>
+          <textarea
+            className="min-h-56 w-full rounded-lg border border-stone-300 px-3 py-2 font-mono text-sm"
+            placeholder={'薪ストーブ\n  リビングの中心に\n  薪置き場\n畑のある暮らし\n  家庭菜園'}
+            value={bulk}
+            onChange={(e) => setBulk(e.target.value)}
+          />
+          <button disabled={busy} className="min-h-12 w-full rounded-lg bg-moss font-bold text-white disabled:opacity-40" onClick={submitBulk}>
+            {busy ? '追加中…' : `まとめて追加（${parseOutline(bulk).length}個）`}
+          </button>
+        </div>
+      )}
     </BottomSheet>
   )
 }
