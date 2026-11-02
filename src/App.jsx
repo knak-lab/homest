@@ -5,6 +5,7 @@ import BottomSheet from './components/BottomSheet'
 import MindMap from './tabs/MindMap'
 import Priority from './tabs/Priority'
 import Lands from './tabs/Lands'
+import Builders from './tabs/Builders'
 
 const TABS = [
   { id: 'mindmap', label: '暮らし', icon: '🌱' },
@@ -61,9 +62,7 @@ export default function App() {
         {tab === 'mindmap' && <MindMap ctx={ctx} />}
         {tab === 'priority' && <Priority ctx={ctx} />}
         {tab === 'land' && <Lands ctx={ctx} />}
-        {tab === 'builder' && (
-          <div className="flex h-full items-center justify-center text-sm text-stone-400">建物は Phase 3 で作ります</div>
-        )}
+        {tab === 'builder' && <Builders ctx={ctx} />}
       </main>
 
       <nav className="grid grid-cols-4 border-t border-stone-200 bg-white safe-bottom">

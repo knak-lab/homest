@@ -19,8 +19,9 @@ export function useEval(ctx, target) {
   const hid = ctx.household.id
   const me = ctx.me
   const partner = ctx.members.find((m) => m.user_id !== me.user_id)
-  const [criteria, setCriteria] = useState([])
+  const [allCriteria, setAllCriteria] = useState([])
   const [scores, setScores] = useState({})
+  const criteria = useMemo(() => allCriteria.filter((c) => !c.hidden), [allCriteria])
 
   // 優先順位を付けた要望（合意 → 自分 → パートナーの順で採用）を、評価項目として自動で用意する
   const load = useCallback(async () => {
@@ -60,7 +61,7 @@ export function useEval(ctx, target) {
       if (!active.has(x.wish_id) || seen.has(x.wish_id)) return false
       seen.add(x.wish_id); return true
     })
-    setCriteria(rows)
+    setAllCriteria(rows)
     const map = {}
     s.data?.forEach((x) => { map[`${x.criteria_id}|${x.target_id}|${x.rater}`] = x })
     setScores(map)
@@ -116,14 +117,14 @@ export function useEval(ctx, target) {
     return { failed, total: max ? Math.round((got / max) * 100) : null, done }
   }
 
-  return { me, partner, criteria, sorted, raw, cellPts, isOverride, differ, save, summary, load }
+  return { me, partner, criteria, allCriteria, sorted, raw, cellPts, isOverride, differ, save, summary, load }
 }
 
 // 比較マトリックス（土地・建物で共通）
 // 行＝評価項目、列＝候補。1列目を固定して横スクロール。
 export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
   const ev = useEval(ctx, target)
-  const { me, partner, criteria, sorted, raw, isOverride, differ, load } = ev
+  const { me, partner, criteria, allCriteria, sorted, raw, isOverride, differ, load } = ev
   const [mode, setMode] = useState('common') // me | partner | common
   const [cell, setCell] = useState(null) // { c, cand }
   const [manage, setManage] = useState(false)
@@ -226,7 +227,7 @@ export default function Matrix({ ctx, target, candidates, onOpenCandidate }) {
           raw={raw} cellPts={cellPts} onSave={(values) => save(cell.c, cell.cand.id, editRater, values)} onClose={() => setCell(null)}
         />
       )}
-      {manage && <CriteriaSheet ctx={ctx} target={target} criteria={criteria} reload={load} onClose={() => setManage(false)} />}
+      {manage && <CriteriaSheet ctx={ctx} target={target} criteria={allCriteria} reload={load} onClose={() => setManage(false)} />}
     </div>
   )
 }
@@ -292,8 +293,24 @@ function CriteriaSheet({ ctx, target, criteria, reload, onClose }) {
     await supabase.from('criteria').delete().eq('id', c.id); reload()
   }
   return (
-    <BottomSheet open title="要望以外の項目" onClose={onClose}>
+    <BottomSheet open title="評価項目の設定" onClose={onClose}>
       <div className="space-y-5 text-sm">
+        <section>
+          <p className="mb-1 font-bold">優先順位からの項目</p>
+          <p className="mb-2 text-[11px] text-stone-400">{target === 'land' ? '土地' : '建物'}の評価に使わない項目はオフにしてください（付けた評価は残ります）。</p>
+          {criteria.filter((c) => c.wish_id).length === 0 && <p className="text-xs text-stone-400">優先順位タブで Must／Want／Nice を付けた要望がここに出ます</p>}
+          <ul className="space-y-1">
+            {['must', 'want', 'nice'].flatMap((rk) => criteria.filter((c) => c.wish_id && c.rank === rk)).map((c) => (
+              <li key={c.id}>
+                <label className="flex min-h-10 items-center gap-2 rounded-lg bg-stone-50 px-2">
+                  <input type="checkbox" className="h-5 w-5 accent-moss" checked={!c.hidden} onChange={(e) => update(c, { hidden: !e.target.checked })} />
+                  <span className={`rounded px-1 py-0.5 text-[9px] font-bold ${rankOf(c.rank).cls}`}>{rankOf(c.rank).label}</span>
+                  <span className={`min-w-0 flex-1 truncate ${c.hidden ? 'text-stone-400 line-through' : ''}`}>{c.name}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </section>
         <section>
           <p className="mb-1 font-bold">要望以外の項目（{criteria.filter((c) => !c.wish_id).length}）</p>
           <p className="mb-2 text-[11px] text-stone-400">優先順位を付けた要望は自動で並びます。ここでは「駅までの距離」など、要望にない項目だけを追加できます。</p>
@@ -332,7 +349,7 @@ const nextMark = (score) => CYCLE[(CYCLE.indexOf(score ?? null) + 1) % CYCLE.len
 
 export function EvalSheet({ ctx, target, candidate, onClose }) {
   const ev = useEval(ctx, target)
-  const { me, partner, sorted, criteria, raw, cellPts, isOverride, differ, save, summary, load } = ev
+  const { me, partner, sorted, criteria, allCriteria, raw, cellPts, isOverride, differ, save, summary, load } = ev
   const [manage, setManage] = useState(false)
   const [memoFor, setMemoFor] = useState(null)
   const [open, setOpen] = useState({ want: false, nice: false })
@@ -433,9 +450,9 @@ export function EvalSheet({ ctx, target, candidate, onClose }) {
             </p>
           </>
         )}
-        <button className="min-h-11 w-full rounded-lg border border-stone-300 text-xs text-stone-600" onClick={() => setManage(true)}>要望以外の項目を追加（任意）</button>
+        <button className="min-h-11 w-full rounded-lg border border-stone-300 text-xs text-stone-600" onClick={() => setManage(true)}>評価項目の設定（使わない項目・追加）</button>
       </div>
-      {manage && <CriteriaSheet ctx={ctx} target={target} criteria={criteria} reload={load} onClose={() => setManage(false)} />}
+      {manage && <CriteriaSheet ctx={ctx} target={target} criteria={allCriteria} reload={load} onClose={() => setManage(false)} />}
     </BottomSheet>
   )
 }
