@@ -84,6 +84,12 @@ function Settings({ open, onClose, ctx, reload }) {
   const [name, setName] = useState(ctx.me.display_name)
   const inviteUrl = `${window.location.origin}${window.location.pathname}?join=${ctx.household.invite_code}`
 
+  const [hname, setHname] = useState(ctx.household.name)
+  const saveHname = async () => {
+    const { error } = await supabase.from('households').update({ name: hname.trim() || 'わが家' }).eq('id', ctx.household.id)
+    if (error) return alert(error.message)
+    reload()
+  }
   const saveName = async () => {
     await supabase.from('members').update({ display_name: name }).eq('user_id', ctx.me.user_id).eq('household_id', ctx.household.id)
     reload()
@@ -103,6 +109,13 @@ function Settings({ open, onClose, ctx, reload }) {
           <div className="flex gap-2">
             <input className="min-w-0 flex-1 rounded-lg border border-stone-300 px-3 py-2" value={name} onChange={(e) => setName(e.target.value)} />
             <button className="rounded-lg bg-stone-800 px-3 text-white" onClick={saveName}>保存</button>
+          </div>
+        </section>
+        <section>
+          <p className="mb-1 font-bold">世帯の名前</p>
+          <div className="flex gap-2">
+            <input className="min-w-0 flex-1 rounded-lg border border-stone-300 px-3 py-2" value={hname} onChange={(e) => setHname(e.target.value)} />
+            <button className="rounded-lg bg-stone-800 px-3 text-white" onClick={saveHname}>保存</button>
           </div>
         </section>
         <section>
