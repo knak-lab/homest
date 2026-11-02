@@ -181,6 +181,83 @@ function MindMapInner({ ctx }) {
 
   const onNodeDragStop = (_e, node) => patch(node.id, { x: node.position.x, y: node.position.y })
 
+  // ───── 開いたときの自動配置：そのノードを中心に、配下を放射状に並べ直す ─────
+  const estSize = (w) => ({
+    w: Math.min(160, 28 + [...(w.title || '（無題）')].length * 13),
+    h: 40 + (w.in_priority || attachCounts[w.id] ? 14 : 0),
+  })
+
+  const expandAndLayout = async (rootId) => {
+    const all = byId[rootId].collapsed ? wishes.map((w) => (w.id === rootId ? { ...w, collapsed: false } : w)) : wishes
+    const map = Object.fromEntries(all.map((w) => [w.id, w]))
+    const root = map[rootId]
+    const center = (w) => { const z = estSize(w); return { x: w.x + z.w / 2, y: w.y + z.h / 2 } }
+    const rc = center(root)
+    const parent = root.parent_id && map[root.parent_id]
+    const full = !parent
+    const baseAngle = parent ? Math.atan2(rc.y - center(parent).y, rc.x - center(parent).x) : -Math.PI / 2
+
+    // 開いたあとに見えるようになる配下ノード
+    const kidsOf = (id) => (map[id].collapsed && id !== rootId ? [] : childrenOf[id] || [])
+    const sub = []
+    const walk = (id) => kidsOf(id).forEach((c) => { sub.push(c); walk(c) })
+    walk(rootId)
+    if (!sub.length) return patch(rootId, { collapsed: false })
+
+    const subSet = new Set(sub)
+    const vis = new Set(visible)
+    const others = all.filter((w) => vis.has(w.id) && !subSet.has(w.id)).map((w) => ({ x: w.x, y: w.y, ...estSize(w) }))
+
+    const span0 = full ? Math.PI * 2 : Math.min(Math.PI * 0.9, Math.max(Math.PI / 3, kidsOf(rootId).length * 0.35))
+
+    // 扇形に子を並べ、孫はそれぞれの子のまわりに外向きの扇で並べる（クラスタ状）
+    const place = (scale, rot) => {
+      const out = {}
+      const fan = (id, c, dir, span, d, sc) => {
+        const kids = kidsOf(id); if (!kids.length) return
+        const k = kids.length
+        const circle = span >= Math.PI * 2 - 1e-6
+        const per = circle ? 95 : 52 + 118 * Math.abs(Math.sin(dir)) // 縦に並ぶときは狭く、横に並ぶときは広く
+        const r = Math.max(d === 1 ? 190 : 150, (k * per) / span) * sc
+        kids.forEach((kid, i) => {
+          const ang = circle ? dir + (i * span) / k : dir - span / 2 + ((i + 0.5) * span) / k
+          const z = estSize(map[kid])
+          const cc = { x: c.x + r * Math.cos(ang), y: c.y + r * Math.sin(ang) }
+          out[kid] = { x: cc.x - z.w / 2, y: cc.y - z.h / 2, w: z.w, h: z.h }
+          const kk = kidsOf(kid).length
+          fan(kid, cc, ang, Math.min(Math.PI * 0.85, Math.max(0.6, kk * 0.32)), d + 1, 1)
+        })
+      }
+      fan(rootId, rc, baseAngle + rot, span0, 1, scale)
+      return out
+    }
+    const hit = (a, b) => a.x < b.x + b.w + 14 && b.x < a.x + a.w + 14 && a.y < b.y + b.h + 14 && b.y < a.y + a.h + 14
+    const score = (out) => {
+      const arr = Object.values(out); let n = 0
+      for (const a of arr) for (const b of others) if (hit(a, b)) n += 3
+      for (let i = 0; i < arr.length; i++) for (let j = i + 1; j < arr.length; j++) if (hit(arr[i], arr[j])) n++
+      return n
+    }
+    let best = null; let bestScore = Infinity
+    search: for (const scale of [1, 1.3, 1.7, 2.2, 2.8, 3.5]) {
+      for (const rot of full ? [0, 0.15, 0.3] : [0, 0.3, -0.3, 0.6, -0.6]) {
+        const o = place(scale, rot); const sc = score(o)
+        if (sc < bestScore) { best = o; bestScore = sc }
+        if (sc === 0) break search
+      }
+    }
+
+    setWishes((ws) => ws.map((w) => (best[w.id] ? { ...w, x: best[w.id].x, y: best[w.id].y } : w.id === rootId ? { ...w, collapsed: false } : w)))
+    const updates = [
+      supabase.from('wishes').update({ collapsed: false }).eq('id', rootId),
+      ...Object.entries(best).map(([id, q]) => supabase.from('wishes').update({ x: q.x, y: q.y }).eq('id', id)),
+    ]
+    const results = await Promise.all(updates)
+    const failed = results.find((r) => r.error)
+    if (failed) alert('配置の保存に失敗しました：' + failed.error.message)
+    setTimeout(() => fitView({ nodes: [{ id: rootId }, ...sub.map((id) => ({ id }))], padding: 0.2, duration: 400 }), 80)
+  }
+
   const addChild = async (parentId, title) => {
     const parent = byId[parentId]
     const pos = placeChild(parent, wishes)
@@ -282,7 +359,7 @@ function MindMapInner({ ctx }) {
               icon={sel.collapsed ? '▸' : '▾'}
               label={sel.collapsed ? '開く' : 'たたむ'}
               disabled={!childrenOf[sel.id]?.length}
-              onClick={() => patch(sel.id, { collapsed: !sel.collapsed })}
+              onClick={() => (sel.collapsed ? expandAndLayout(sel.id) : patch(sel.id, { collapsed: true }))}
             />
             <ActionBtn icon="◎" label="中心に" onClick={() => { setFocusId(sel.id); setSelectedId(null) }} />
             <ActionBtn icon="🗑" label="削除" disabled={!sel.parent_id} onClick={() => removeWish(sel.id)} />
