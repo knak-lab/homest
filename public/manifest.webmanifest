@@ -1,0 +1,17 @@
+{
+  "name": "homest ふたりの家づくりノート",
+  "short_name": "homest",
+  "description": "ふたりの暮らしのマインドマップ、優先順位、土地・建物の比較",
+  "lang": "ja",
+  "start_url": "/homest/",
+  "scope": "/homest/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f5f1ea",
+  "theme_color": "#f5f1ea",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
