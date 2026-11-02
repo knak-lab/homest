@@ -99,9 +99,10 @@ export default function Lands({ ctx }) {
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-bold">{l.name}</p>
+                        <p className="text-xs text-stone-600">{l.price != null ? `${Number(l.price).toLocaleString()}万円` : '価格 —'}</p>
                         <p className="text-xs text-stone-600">
-                          {l.price != null && `${Number(l.price).toLocaleString()}万円`}{l.price != null && l.tsubo != null && '・'}{l.tsubo != null && `${l.tsubo}坪`}
-                          {l.price != null && l.tsubo ? `（坪${Math.round((l.price / l.tsubo) * 10) / 10}万）` : ''}
+                          {l.tsubo != null ? `${l.tsubo}坪` : '広さ —'}
+                          {l.price != null && l.tsubo ? <span className="text-stone-400">（坪{Math.round((l.price / l.tsubo) * 10) / 10}万）</span> : null}
                         </p>
                         <span className={`mt-1 inline-block rounded px-1.5 py-0.5 text-[10px] ${STATUS_CLS[l.status] || STATUS_CLS['検討中']}`}>{l.status}</span>
                       </div>
