@@ -21,3 +21,21 @@ export async function loadFamilyProjects() {
 }
 
 export const hasTaskmaniaToken = () => Boolean(peekIdToken())
+
+// 1件ずつ足す・変える・完了にする（タスクマニアの Ops.gs）。処理後の家族PJを返す
+//   ops 例：{ op: 'complete', kind: 'subtask', id, done }
+//           { op: 'addSubtask', taskId, subtask: { text, scheduledDate, startTime } }
+//           { op: 'update', kind: 'subtask', id, fields: { text, scheduledDate, startTime } }
+export async function applyOps(ops) {
+  const data = await withIdToken(async (idToken) => {
+    const res = await fetch(TASKMANIA_GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // GAS はプリフライトに対応していないため
+      body: JSON.stringify({ id_token: idToken, ops, read: true }),
+    })
+    if (!res.ok) throw new Error(`タスクマニアに保存できませんでした（${res.status}）`)
+    return res.json()
+  })
+  if (data && data.ok === false) throw new Error(data.error || 'タスクマニアへの保存に失敗しました')
+  return (data.projects || []).filter((p) => p.owner === '家族')
+}
