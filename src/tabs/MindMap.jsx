@@ -306,7 +306,13 @@ function MindMapInner({ ctx }) {
               disabled={!childrenOf[sel.id]?.length}
               onClick={() => patch(sel.id, { collapsed: !sel.collapsed })}
             />
-            <ActionBtn icon="◎" label="中心に" onClick={() => { setFocusId(sel.id); setSelectedId(null) }} />
+            <ActionBtn
+              icon={sel.in_priority ? '☑' : '☐'}
+              label="優先"
+              active={sel.in_priority}
+              disabled={!sel.parent_id}
+              onClick={() => patch(sel.id, { in_priority: !sel.in_priority })}
+            />
             <ActionBtn icon="🗑" label="削除" disabled={!sel.parent_id} onClick={() => removeWish(sel.id)} />
           </div>
         </div>
@@ -391,9 +397,9 @@ function NodePreview({ wish, count, onEdit }) {
   )
 }
 
-function ActionBtn({ icon, label, onClick, disabled }) {
+function ActionBtn({ icon, label, onClick, disabled, active }) {
   return (
-    <button disabled={disabled} onClick={onClick} className="flex min-h-12 flex-col items-center justify-center rounded-lg active:bg-stone-100 disabled:opacity-30">
+    <button disabled={disabled} onClick={onClick} className={`flex min-h-12 flex-col items-center justify-center rounded-lg active:bg-stone-100 disabled:opacity-30 ${active ? 'bg-amber-50 font-bold text-amber-700' : ''}`}>
       <span className="text-base leading-none">{icon}</span>{label}
     </button>
   )
