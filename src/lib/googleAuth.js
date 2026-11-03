@@ -1,0 +1,258 @@
+// =============================================================
+//  Googleログイン（Google Identity Services）
+//  ※ taskmania/src/auth/googleAuth.js をそのまま流用（タスクマニアのGASを読むため）
+//
+//  ・ログインすると Google が「IDトークン」（約1時間有効）を発行する
+//  ・GAS へのリクエストには必ずこの IDトークンを付ける
+//  ・GAS 側で「本物のトークンか」「登録されたメールか」を確認する
+//    → サイトのJSを読まれても、データにはアクセスできない
+//
+//  knak-lab.github.io 配下のアプリは localStorage を共有するので、
+//  1つのアプリでログインすれば他のアプリでもそのまま使える。
+// =============================================================
+
+// タスクマニアなど knak-lab の GAS アプリ共通の OAuth クライアントID（公開されている値）
+export const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '281010340185-bvk302ksnhejasme4f8a89jrqqbjgioo.apps.googleusercontent.com'
+
+const STORAGE_KEY = 'knak_google_id_token'
+const GIS_SRC = 'https://accounts.google.com/gsi/client'
+const EXPIRY_MARGIN_SEC = 120
+
+// サーバーが返す理由コード → 画面に出す文言
+export const AUTH_MESSAGES = {
+  not_allowed: {
+    title: '登録されていないアカウントです',
+    body: 'このアプリは登録メンバー専用です。登録済みのGoogleアカウントでログインし直してください。',
+  },
+  login_required: {
+    title: 'ログインの有効期限が切れました',
+    body: 'お手数ですが、もう一度ログインしてください。',
+  },
+  unavailable: {
+    title: 'ただいま利用できません',
+    body: '時間をおいてもう一度お試しください。',
+  },
+  network: {
+    title: '接続できませんでした',
+    body: '通信状況を確認して、ページを開き直してください。',
+  },
+}
+
+let gisPromise = null
+let initialized = false
+let pending = []
+const listeners = new Set()
+// error: AUTH_MESSAGES のキー（なければ空）
+let state = { signedIn: false, needLogin: false, email: '', error: '', rejectedEmail: '' }
+
+function setState(patch) {
+  state = { ...state, ...patch }
+  listeners.forEach((fn) => fn(state))
+}
+
+export function getAuthState() {
+  return state
+}
+
+export function subscribeAuth(fn) {
+  listeners.add(fn)
+  return () => listeners.delete(fn)
+}
+
+function decodePayload(token) {
+  try {
+    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+    const json = decodeURIComponent(
+      atob(part)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join(''),
+    )
+    return JSON.parse(json)
+  } catch {
+    return null
+  }
+}
+
+function readStoredToken() {
+  let token = ''
+  try {
+    token = localStorage.getItem(STORAGE_KEY) || ''
+  } catch {
+    return null
+  }
+  if (!token) return null
+  const payload = decodePayload(token)
+  if (!payload || !payload.exp) return null
+  if (payload.exp - EXPIRY_MARGIN_SEC <= Date.now() / 1000) return null
+  return { token, email: payload.email || '' }
+}
+
+function storeToken(token) {
+  try {
+    localStorage.setItem(STORAGE_KEY, token)
+  } catch {
+    /* プライベートモード等では保存できない（このタブの間だけ有効） */
+  }
+}
+
+function clearStoredToken() {
+  try {
+    localStorage.removeItem(STORAGE_KEY)
+  } catch {
+    /* noop */
+  }
+}
+
+function loadGis() {
+  if (gisPromise) return gisPromise
+  gisPromise = new Promise((resolve, reject) => {
+    if (window.google?.accounts?.id) return resolve(window.google)
+    const s = document.createElement('script')
+    s.src = GIS_SRC
+    s.async = true
+    s.defer = true
+    s.onload = () => resolve(window.google)
+    s.onerror = () => {
+      gisPromise = null
+      reject(new Error('gis_load_failed'))
+    }
+    document.head.appendChild(s)
+  })
+  return gisPromise
+}
+
+function handleCredential(response) {
+  const token = response?.credential
+  const payload = token ? decodePayload(token) : null
+  if (!payload) return
+  storeToken(token)
+  setState({ signedIn: true, needLogin: false, email: payload.email || '', error: '', rejectedEmail: '' })
+  const waiters = pending
+  pending = []
+  waiters.forEach((resolve) => resolve(token))
+}
+
+async function ensureInitialized() {
+  const google = await loadGis()
+  if (!initialized) {
+    google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: handleCredential,
+      auto_select: true,
+      cancel_on_tap_outside: false,
+      use_fedcm_for_prompt: true,
+    })
+    initialized = true
+  }
+  return google
+}
+
+// ボタンを描画する（AuthGate から呼ばれる）
+export async function renderSignInButton(el) {
+  const google = await ensureInitialized()
+  el.innerHTML = ''
+  google.accounts.id.renderButton(el, {
+    type: 'standard',
+    theme: 'outline',
+    size: 'large',
+    text: 'signin_with',
+    shape: 'pill',
+    logo_alignment: 'left',
+    width: 260,
+    locale: 'ja',
+  })
+}
+
+// 有効なIDトークンを返す。なければログインを促し、ログイン完了まで待つ。
+export async function requireIdToken() {
+  if (!GOOGLE_CLIENT_ID) throw new Error('VITE_GOOGLE_CLIENT_ID が設定されていません（.env を確認してください）')
+  const stored = readStoredToken()
+  if (stored) {
+    if (!state.signedIn || state.email !== stored.email) setState({ signedIn: true, email: stored.email })
+    return stored.token
+  }
+  const promise = new Promise((resolve) => pending.push(resolve))
+  if (state.needLogin && pending.length > 1) return promise // すでにログイン待ち
+  setState({ needLogin: true })
+  try {
+    const google = await ensureInitialized()
+    // 登録外アカウントで弾かれた直後は自動ログインさせない（同じアカウントで繰り返さないため）
+    if (state.error !== 'not_allowed') google.accounts.id.prompt()
+  } catch {
+    setState({ error: 'network' })
+  }
+  return promise
+}
+
+// 保存済みの有効なIDトークンを返す（なければ null）。ログイン画面は出さない。
+// 他アプリのデータをついでに読むときなど、失敗しても困らない読み込みで使う。
+export function peekIdToken() {
+  const stored = readStoredToken()
+  return stored ? stored.token : null
+}
+
+export function hasValidToken() {
+  return Boolean(readStoredToken())
+}
+
+// サーバーに拒否されたとき
+function handleRejection(code) {
+  const key = AUTH_MESSAGES[code] ? code : 'login_required'
+  const rejectedEmail = key === 'not_allowed' ? state.email : ''
+  clearStoredToken()
+  setState({ signedIn: false, email: '', error: key, rejectedEmail })
+  if (key === 'not_allowed') {
+    loadGis()
+      .then((google) => google.accounts.id.disableAutoSelect())
+      .catch(() => {})
+  }
+}
+
+// 別のアカウントでログインし直す
+export async function switchAccount() {
+  clearStoredToken()
+  setState({ signedIn: false, email: '', needLogin: true })
+  try {
+    const google = await ensureInitialized()
+    google.accounts.id.disableAutoSelect()
+    google.accounts.id.prompt()
+  } catch {
+    setState({ error: 'network' })
+  }
+}
+
+export async function signOut() {
+  clearStoredToken()
+  try {
+    const google = await loadGis()
+    google.accounts.id.disableAutoSelect()
+  } catch {
+    /* noop */
+  }
+  setState({ signedIn: false, email: '', needLogin: true, error: '', rejectedEmail: '' })
+}
+
+function rejectionCode(json) {
+  if (!json || json.ok !== false) return ''
+  const m = String(json.error || '').match(/^unauthorized:?\s*([a-z_]*)/i)
+  return m ? m[1] || 'login_required' : ''
+}
+
+// IDトークンを付けてリクエストする。サーバーに拒否されたら1回だけログインし直して再実行する。
+//   fn: (idToken) => Promise<パース済みJSON>
+export async function withIdToken(fn) {
+  const token = await requireIdToken()
+  let json = await fn(token)
+  let code = rejectionCode(json)
+  if (!code) return json
+  handleRejection(code)
+  const retryToken = await requireIdToken()
+  json = await fn(retryToken)
+  code = rejectionCode(json)
+  if (code) {
+    handleRejection(code)
+    setState({ needLogin: true })
+  }
+  return json
+}

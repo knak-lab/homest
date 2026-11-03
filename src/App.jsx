@@ -7,6 +7,7 @@ import Priority from './tabs/Priority'
 import Lands from './tabs/Lands'
 import Builders from './tabs/Builders'
 import Budget from './tabs/Budget'
+import Schedule from './tabs/Schedule'
 
 // ?embed=budget のときは予算画面だけを表示する（お金ちゃんの「家」タブに埋め込む用）
 const EMBED = new URLSearchParams(window.location.search).get('embed')
@@ -17,6 +18,7 @@ const TABS = [
   { id: 'land', label: '土地', icon: '🗺️' },
   { id: 'builder', label: '建物', icon: '🏠' },
   { id: 'budget', label: '予算', icon: '💰' },
+  { id: 'schedule', label: '予定', icon: '📅' },
 ]
 
 export default function App() {
@@ -93,9 +95,10 @@ export default function App() {
         {tab === 'land' && <Lands ctx={ctx} />}
         {tab === 'builder' && <Builders ctx={ctx} />}
         {tab === 'budget' && <Budget ctx={ctx} />}
+        {tab === 'schedule' && <Schedule />}
       </main>
 
-      <nav className="grid grid-cols-5 border-t border-stone-200 bg-white safe-bottom">
+      <nav className="grid grid-cols-6 border-t border-stone-200 bg-white safe-bottom">
         {TABS.map((t) => (
           <button key={t.id} className={`flex min-h-14 flex-col items-center justify-center text-xs ${tab === t.id ? 'font-bold text-moss' : 'text-stone-400'}`} onClick={() => setTab(t.id)}>
             <span className="text-lg leading-none">{t.icon}</span>
