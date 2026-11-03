@@ -16,7 +16,7 @@ export default function Schedule() {
   const [projects, setProjects] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [selectedId, setSelectedId] = useState(null)
+  const [openIds, setOpenIds] = useState([])
   const [showDone, setShowDone] = useState(false)
   const btnRef = useRef(null)
 
@@ -96,8 +96,11 @@ export default function Schedule() {
           </p>
         ) : (
           <>
-            <Roadmap tasks={tasks} today={today} selectedId={selectedId} onSelect={(id) => setSelectedId(selectedId === id ? null : id)} />
-            <SubtaskList tasks={tasks} today={today} selectedId={selectedId} onClear={() => setSelectedId(null)} showDone={showDone} setShowDone={setShowDone} />
+            <Roadmap tasks={tasks} today={today} openIds={openIds} onSelect={(id) => {
+              setOpenIds((o) => (o.includes(id) ? o : [...o, id]))
+              setTimeout(() => document.getElementById(`task-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+            }} />
+            <SubtaskList tasks={tasks} today={today} openIds={openIds} setOpenIds={setOpenIds} showDone={showDone} setShowDone={setShowDone} />
           </>
         )}
       </div>
@@ -132,7 +135,7 @@ const addMonth = (y, m, n) => { const d = new Date(y, m - 1 + n, 1); return [d.g
 const SPANS = [3, 6, 12]
 
 // ───── ロードマップ：左に固定のタスク名、右に月ごとの横スクロール ─────
-function Roadmap({ tasks, today, selectedId, onSelect }) {
+function Roadmap({ tasks, today, openIds, onSelect }) {
   const [span, setSpan] = useState(() => { try { const v = Number(localStorage.getItem('homest-roadmap-span')); return SPANS.includes(v) ? v : 6 } catch { return 6 } })
   const dated = tasks.filter((t) => t.startDate || t.endDate)
   const first = dated.reduce((m, t) => { const s = t.startDate || t.endDate; return !m || s < m ? s : m }, null) || today
@@ -163,7 +166,7 @@ function Roadmap({ tasks, today, selectedId, onSelect }) {
         <div className="w-28 shrink-0 border-r border-stone-200">
           <div className="h-7 border-b border-stone-200" />
           {tasks.map((t) => (
-            <button key={t.id} className={`flex h-11 w-full items-center gap-1.5 border-b border-stone-100 px-2 text-left text-xs ${selectedId === t.id ? 'bg-amber-50 font-bold' : ''}`} onClick={() => onSelect(t.id)}>
+            <button key={t.id} className={`flex h-11 w-full items-center gap-1.5 border-b border-stone-100 px-2 text-left text-xs ${openIds.includes(t.id) ? 'bg-amber-50 font-bold' : ''}`} onClick={() => onSelect(t.id)}>
               <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: statusOf(t, today).color }} />
               <span className="line-clamp-2 break-all">{t.name}</span>
             </button>
@@ -188,7 +191,7 @@ function Roadmap({ tasks, today, selectedId, onSelect }) {
               const visible = s && right > 0 && left < W
               const pct = pctOf(t)
               return (
-                <div key={t.id} className={`relative h-11 border-b border-stone-100 ${selectedId === t.id ? 'bg-amber-50' : ''}`} onClick={() => onSelect(t.id)}>
+                <div key={t.id} className={`relative h-11 border-b border-stone-100 ${openIds.includes(t.id) ? 'bg-amber-50' : ''}`} onClick={() => onSelect(t.id)}>
                   {months.map((_, i) => <div key={i} className="absolute top-0 bottom-0 border-r border-stone-100" style={{ left: (i + 1) * MONTH_W - 1 }} />)}
                   {visible && (
                     <div className="absolute top-2.5 h-6 overflow-hidden rounded-md" style={{ left, width, background: `${st.color}33`, border: `1.5px solid ${st.color}` }}>
@@ -219,13 +222,15 @@ function Roadmap({ tasks, today, selectedId, onSelect }) {
 }
 
 // ───── サブタスク：タスクごとに一覧 ─────
-function SubtaskList({ tasks, today, selectedId, onClear, showDone, setShowDone }) {
-  const list = selectedId ? tasks.filter((t) => t.id === selectedId) : tasks
+function SubtaskList({ tasks, today, openIds, setOpenIds, showDone, setShowDone }) {
+  const list = tasks
+  const toggle = (id) => setOpenIds((o) => (o.includes(id) ? o.filter((x) => x !== id) : [...o, id]))
+  const allOpen = tasks.length > 0 && tasks.every((t) => openIds.includes(t.id))
   return (
     <section className="p-3">
       <div className="mb-2 flex items-center gap-2">
-        <h3 className="text-sm font-bold">サブタスク</h3>
-        {selectedId && <button className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-800" onClick={onClear}>選択中のタスクだけ表示 ✕</button>}
+        <h3 className="text-sm font-bold">タスク</h3>
+        <button className="rounded-full bg-stone-100 px-2 py-0.5 text-[11px] text-stone-600" onClick={() => setOpenIds(allOpen ? [] : tasks.map((t) => t.id))}>{allOpen ? 'すべてたたむ' : 'すべて開く'}</button>
         <label className="ml-auto flex items-center gap-1 text-[11px] text-stone-500">
           <input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} /> 完了も表示
         </label>
@@ -236,14 +241,17 @@ function SubtaskList({ tasks, today, selectedId, onClear, showDone, setShowDone 
           const subs = [...(t.subtasks || [])].sort((a, b) => (a.scheduledDate || '9999').localeCompare(b.scheduledDate || '9999'))
           const shown = subs.filter((x) => showDone || !x.done)
           return (
-            <div key={t.id} className="rounded-xl bg-white p-3 shadow-sm">
-              <div className="mb-1.5 flex items-center gap-2">
-                <span className="rounded px-1.5 py-0.5 text-[10px] font-bold text-white" style={{ background: st.color }}>{st.label}</span>
-                <p className="min-w-0 flex-1 truncate text-sm font-bold">{t.name}</p>
-                <span className="text-[11px] text-stone-400">{subs.filter((x) => x.done).length}/{subs.length}</span>
-              </div>
-              {(t.startDate || t.endDate) && <p className="mb-1.5 text-[11px] text-stone-400">期間 {md(t.startDate || t.endDate)}{t.endDate && t.endDate !== t.startDate ? `〜${md(t.endDate)}` : ''}</p>}
-              {shown.length === 0 ? (
+            <div key={t.id} id={`task-${t.id}`} className="scroll-mt-2 rounded-xl bg-white shadow-sm">
+              <button className="block w-full p-3 text-left" onClick={() => toggle(t.id)}>
+                <div className="flex items-center gap-2">
+                  <span className="rounded px-1.5 py-0.5 text-[10px] font-bold text-white" style={{ background: st.color }}>{st.label}</span>
+                  <p className="min-w-0 flex-1 truncate text-sm font-bold">{t.name}</p>
+                  <span className="text-[11px] text-stone-400">{subs.filter((x) => x.done).length}/{subs.length}</span>
+                  <span className="text-xs text-stone-400">{openIds.includes(t.id) ? '▾' : '▸'}</span>
+                </div>
+                {(t.startDate || t.endDate) && <p className="mt-1 text-[11px] text-stone-400">期間 {md(t.startDate || t.endDate)}{t.endDate && t.endDate !== t.startDate ? `〜${md(t.endDate)}` : ''}</p>}
+              </button>
+              {openIds.includes(t.id) && <div className="px-3 pb-3">{shown.length === 0 ? (
                 <p className="text-xs text-stone-400">{subs.length ? 'すべて完了しています' : 'サブタスクはありません'}</p>
               ) : (
                 <ul className="divide-y divide-stone-100">
@@ -263,7 +271,7 @@ function SubtaskList({ tasks, today, selectedId, onClear, showDone, setShowDone 
                     )
                   })}
                 </ul>
-              )}
+              )}</div>}
             </div>
           )
         })}
