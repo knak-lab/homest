@@ -6,12 +6,17 @@ import MindMap from './tabs/MindMap'
 import Priority from './tabs/Priority'
 import Lands from './tabs/Lands'
 import Builders from './tabs/Builders'
+import Budget from './tabs/Budget'
+
+// ?embed=budget のときは予算画面だけを表示する（お金ちゃんの「家」タブに埋め込む用）
+const EMBED = new URLSearchParams(window.location.search).get('embed')
 
 const TABS = [
   { id: 'mindmap', label: '暮らし', icon: '🌱' },
   { id: 'priority', label: '優先順位', icon: '⭐' },
   { id: 'land', label: '土地', icon: '🗺️' },
   { id: 'builder', label: '建物', icon: '🏠' },
+  { id: 'budget', label: '予算', icon: '💰' },
 ]
 
 export default function App() {
@@ -43,10 +48,34 @@ export default function App() {
 
   useEffect(() => { loadContext() }, [loadContext])
 
+  // 埋め込み時：別タブでログインしてから戻ってきたら、ログイン状態を読み直す
+  useEffect(() => {
+    if (!EMBED || !isConfigured) return
+    const onVis = () => {
+      if (document.visibilityState === 'visible') supabase.auth.getSession().then(({ data }) => setSession(data.session))
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [])
+
   if (!isConfigured) {
     return <div className="p-6 text-sm">Supabase の接続設定（VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY）がありません。docs/setup.md を見て設定してください。</div>
   }
   if (session === undefined) return null
+  if (EMBED) {
+    // 埋め込み先ではGoogleログインができないので、homest本体でログインしてもらう（同じドメインなのでログイン状態は共有される）
+    if (!session || ctx === null) {
+      return (
+        <div className="p-6 text-center text-sm leading-relaxed text-stone-600">
+          <p>{session ? 'homestで世帯を作成・参加してください。' : 'homestにログインすると、家の予算がここに表示されます。'}</p>
+          <a className="mt-3 inline-block rounded-xl bg-moss px-5 py-3 font-bold text-white" href={window.location.pathname} target="_blank" rel="noreferrer">homestを開く</a>
+          <p className="mt-2 text-xs text-stone-400">ログイン後、この画面に戻ると表示されます</p>
+        </div>
+      )
+    }
+    if (ctx === undefined) return null
+    return <Budget ctx={ctx} embedded />
+  }
   if (!session) return <Login />
   if (ctx === undefined) return null
   if (ctx === null) return <HouseholdSetup onDone={loadContext} />
@@ -63,9 +92,10 @@ export default function App() {
         {tab === 'priority' && <Priority ctx={ctx} />}
         {tab === 'land' && <Lands ctx={ctx} />}
         {tab === 'builder' && <Builders ctx={ctx} />}
+        {tab === 'budget' && <Budget ctx={ctx} />}
       </main>
 
-      <nav className="grid grid-cols-4 border-t border-stone-200 bg-white safe-bottom">
+      <nav className="grid grid-cols-5 border-t border-stone-200 bg-white safe-bottom">
         {TABS.map((t) => (
           <button key={t.id} className={`flex min-h-14 flex-col items-center justify-center text-xs ${tab === t.id ? 'font-bold text-moss' : 'text-stone-400'}`} onClick={() => setTab(t.id)}>
             <span className="text-lg leading-none">{t.icon}</span>
