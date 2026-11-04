@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core'
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { supabase } from '../lib/supabase'
 import { RANKS, rankOf } from '../lib/constants'
 import BottomSheet from '../components/BottomSheet'
@@ -11,7 +14,6 @@ export default function Priority({ ctx }) {
   const [wishes, setWishes] = useState([])
   const [ratings, setRatings] = useState({})
   const [sorts, setSorts] = useState({})
-  const [reorder, setReorder] = useState(false)
   const [mode, setMode] = useState('me') // me | partner | agreed | compare
   const [openId, setOpenId] = useState(null)
 
@@ -50,28 +52,30 @@ export default function Priority({ ctx }) {
     const nextSort = value ? Math.max(-1, ...laneOf(value, rater).filter((w) => w.id !== wishId).map((w) => sortOf(w.id, rater))) + 1 : 0
     setRatings((r) => ({ ...r, [`${wishId}|${rater}`]: value }))
     setSorts((s) => ({ ...s, [`${wishId}|${rater}`]: nextSort }))
-    const { error } = await supabase.from('ratings').upsert(
-      { household_id: hid, target_type: 'wish', target_id: wishId, rater, rank: value, sort: nextSort, updated_at: new Date().toISOString() },
-      { onConflict: 'target_type,target_id,rater' },
-    )
+    const row = { household_id: hid, target_type: 'wish', target_id: wishId, rater, rank: value, sort: nextSort, updated_at: new Date().toISOString() }
+    let { error } = await supabase.from('ratings').upsert(row, { onConflict: 'target_type,target_id,rater' })
+    if (error && isNoSortColumn(error)) {
+      // 並び替え用の列がまだない（SQL 0005 未実行）ときは、順番なしで保存する
+      const { sort: _s, ...rest } = row
+      ;({ error } = await supabase.from('ratings').upsert(rest, { onConflict: 'target_type,target_id,rater' }))
+    }
     if (error) { alert(error.message); load() }
   }
 
-  // ▲▼で1つ上・下と入れ替える（レーン全体を 0,1,2… に振り直して保存）
-  const move = async (wishId, rater, dir) => {
-    const rk = rank(wishId, rater)
-    const lane = laneOf(rk, rater)
-    const i = lane.findIndex((w) => w.id === wishId); const j = i + dir
-    if (i < 0 || j < 0 || j >= lane.length) return
-    ;[lane[i], lane[j]] = [lane[j], lane[i]]
-    setSorts((s) => { const n = { ...s }; lane.forEach((w, k) => { n[`${w.id}|${rater}`] = k }); return n })
+  // ドラッグで並べ替えたレーンを 0,1,2… に振り直して保存
+  const reorderLane = async (rk, rater, ordered) => {
+    setSorts((so) => { const n = { ...so }; ordered.forEach((w, k) => { n[`${w.id}|${rater}`] = k }); return n })
     const now = new Date().toISOString()
     const { error } = await supabase.from('ratings').upsert(
-      lane.map((w, k) => ({ household_id: hid, target_type: 'wish', target_id: w.id, rater, rank: rk, sort: k, updated_at: now })),
+      ordered.map((w, k) => ({ household_id: hid, target_type: 'wish', target_id: w.id, rater, rank: rk, sort: k, updated_at: now })),
       { onConflict: 'target_type,target_id,rater' },
     )
-    if (error) { alert(error.message); load() }
+    if (error) {
+      alert(isNoSortColumn(error) ? '並び替えを保存するには、SupabaseでSQL「0005_priority_sort.sql」を実行してください。' : error.message)
+      load()
+    }
   }
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
 
   const mismatch = (id) => {
     if (!partner) return false
@@ -123,41 +127,32 @@ export default function Priority({ ctx }) {
         {mode !== 'compare' && items.length > 0 && (mode !== 'partner' || partner) && (
           <div className="space-y-4">
             {(mode === 'me' || mode === 'agreed') && (
-              <div className="flex justify-end">
-                <button className={`min-h-9 rounded-full px-3 text-xs ${reorder ? 'bg-moss text-white' : 'border border-stone-300 bg-white text-stone-600'}`} onClick={() => setReorder((v) => !v)}>
-                  {reorder ? '✓ 並び替えを終える' : '↕ 並び替え'}
-                </button>
-              </div>
+              <p className="text-right text-[11px] text-stone-400">右の ≡ をつかんで上下にドラッグすると並べ替えられます</p>
             )}
             {[...RANKS, { id: null, label: '未分類', sub: 'まだ決めていない', cls: 'bg-stone-400 text-white' }].map((r) => {
               const rater = raterOf(mode)
               const list = r.id ? laneOf(r.id, rater) : items.filter((w) => !rank(w.id, rater))
-              const sortable = reorder && r.id && (mode === 'me' || mode === 'agreed')
+              const sortable = Boolean(r.id) && (mode === 'me' || mode === 'agreed')
+              const onDragEnd = ({ active, over }) => {
+                if (!over || active.id === over.id) return
+                const from = list.findIndex((w) => w.id === active.id); const to = list.findIndex((w) => w.id === over.id)
+                reorderLane(r.id, rater, arrayMove(list, from, to))
+              }
               return (
                 <section key={r.id ?? 'none'}>
                   <h3 className="mb-1.5 flex items-baseline gap-2">
                     <span className={`rounded px-2 py-0.5 text-xs font-bold ${r.cls}`}>{r.label}</span>
                     <span className="text-xs text-stone-500">{r.sub}・{list.length}件</span>
                   </h3>
-                  <div className="space-y-1.5">
-                    {list.map((w, i) => (
-                      <div key={w.id} className="flex items-stretch gap-1.5">
-                        <button disabled={sortable} className="flex min-h-12 min-w-0 flex-1 items-center gap-2 rounded-xl bg-white px-3 py-2 text-left shadow-sm" onClick={() => setOpenId(w.id)}>
-                          {r.id && <span className="w-5 shrink-0 text-center text-xs font-bold text-stone-400">{i + 1}</span>}
-                          <span className="min-w-0 flex-1">
-                            <span className="block text-sm">{w.title}</span>
-                            {parentTitle(w) && <span className="block text-[11px] text-stone-400">{parentTitle(w)} ›</span>}
-                          </span>
-                        </button>
-                        {sortable && (
-                          <div className="flex shrink-0 flex-col gap-1">
-                            <button disabled={i === 0} className="flex h-[1.4rem] w-10 items-center justify-center rounded-md bg-white text-xs shadow-sm disabled:opacity-30" onClick={() => move(w.id, rater, -1)}>▲</button>
-                            <button disabled={i === list.length - 1} className="flex h-[1.4rem] w-10 items-center justify-center rounded-md bg-white text-xs shadow-sm disabled:opacity-30" onClick={() => move(w.id, rater, 1)}>▼</button>
-                          </div>
-                        )}
+                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+                    <SortableContext items={list.map((w) => w.id)} strategy={verticalListSortingStrategy}>
+                      <div className="space-y-1.5">
+                        {list.map((w, i) => (
+                          <SortableCard key={w.id} id={w.id} enabled={sortable} index={r.id ? i + 1 : null} title={w.title} sub={parentTitle(w)} onOpen={() => setOpenId(w.id)} />
+                        ))}
                       </div>
-                    ))}
-                  </div>
+                    </SortableContext>
+                  </DndContext>
                 </section>
               )
             })}
@@ -208,6 +203,31 @@ export default function Priority({ ctx }) {
           setRank={setRank}
           onClose={() => setOpenId(null)}
         />
+      )}
+    </div>
+  )
+}
+
+const isNoSortColumn = (e) => /'sort' column/.test(e?.message || '')
+
+// ドラッグで並べ替えられるカード（≡ の部分をつかむ。スクロールの邪魔をしないように）
+function SortableCard({ id, enabled, index, title, sub, onOpen }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id, disabled: !enabled })
+  const style = { transform: CSS.Transform.toString(transform), transition, zIndex: isDragging ? 20 : undefined, position: 'relative' }
+  return (
+    <div ref={setNodeRef} style={style} className={`flex items-stretch rounded-xl bg-white shadow-sm ${isDragging ? 'opacity-90 shadow-lg ring-2 ring-moss' : ''}`}>
+      <button className="flex min-h-12 min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left" onClick={onOpen}>
+        {index && <span className="w-5 shrink-0 text-center text-xs font-bold text-stone-400">{index}</span>}
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm">{title}</span>
+          {sub && <span className="block text-[11px] text-stone-400">{sub} ›</span>}
+        </span>
+      </button>
+      {enabled && (
+        <button ref={setActivatorNodeRef} {...attributes} {...listeners} aria-label="並べ替え"
+          className="flex w-11 shrink-0 cursor-grab items-center justify-center text-lg text-stone-400 active:cursor-grabbing" style={{ touchAction: 'none' }}>
+          ≡
+        </button>
       )}
     </div>
   )
