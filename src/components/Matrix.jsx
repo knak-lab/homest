@@ -29,29 +29,32 @@ export function useEval(ctx, target) {
       supabase.from('criteria').select('*').eq('household_id', hid).eq('target', target).order('sort').order('created_at'),
       supabase.from('scores').select('*').eq('household_id', hid),
       supabase.from('wishes').select('id,title').eq('household_id', hid).eq('in_priority', true),
-      supabase.from('ratings').select('target_id,rater,rank').eq('household_id', hid).eq('target_type', 'wish'),
+      supabase.from('ratings').select('*').eq('household_id', hid).eq('target_type', 'wish'),
     ])
     if (c.error) return alert(c.error.message)
-    const rk = {}; r.data?.forEach((x) => { rk[`${x.target_id}|${x.rater}`] = x.rank })
-    const rankFor = (wid) => rk[`${wid}|agreed`] || rk[`${wid}|${me.user_id}`] || (partner ? rk[`${wid}|${partner.user_id}`] : null) || null
+    const rk = {}; r.data?.forEach((x) => { if (x.rank) rk[`${x.target_id}|${x.rater}`] = x })
+    const pick = (wid) => rk[`${wid}|agreed`] || rk[`${wid}|${me.user_id}`] || (partner ? rk[`${wid}|${partner.user_id}`] : null) || null
+    const rankFor = (wid) => pick(wid)?.rank || null
+    const sortFor = (wid) => pick(wid)?.sort ?? 0 // 優先順位タブで並べた順を引き継ぐ
     let rows = c.data
     const byWish = {}
     rows.forEach((x) => { if (x.wish_id && !byWish[x.wish_id]) byWish[x.wish_id] = x })
     const inserts = []; const updates = []
-    ;(w.data || []).forEach((wish, i) => {
+    ;(w.data || []).forEach((wish) => {
       const rank = rankFor(wish.id)
       if (!rank) return
       const ex = byWish[wish.id]
-      if (!ex) inserts.push({ household_id: hid, target, name: wish.title, wish_id: wish.id, rank, sort: 1000 + i })
-      else if (ex.rank !== rank || ex.name !== wish.title) updates.push({ id: ex.id, rank, name: wish.title })
+      const sort = sortFor(wish.id)
+      if (!ex) inserts.push({ household_id: hid, target, name: wish.title, wish_id: wish.id, rank, sort })
+      else if (ex.rank !== rank || ex.name !== wish.title || ex.sort !== sort) updates.push({ id: ex.id, rank, name: wish.title, sort })
     })
     if (inserts.length) {
       const { data } = await supabase.from('criteria').insert(inserts).select()
       rows = [...rows, ...(data || [])]
     }
     for (const u of updates) {
-      await supabase.from('criteria').update({ rank: u.rank, name: u.name }).eq('id', u.id)
-      rows = rows.map((x) => (x.id === u.id ? { ...x, rank: u.rank, name: u.name } : x))
+      await supabase.from('criteria').update({ rank: u.rank, name: u.name, sort: u.sort }).eq('id', u.id)
+      rows = rows.map((x) => (x.id === u.id ? { ...x, rank: u.rank, name: u.name, sort: u.sort } : x))
     }
     // 優先順位から外した要望や、未分類に戻した要望の項目は表示しない（点数は残す）
     const active = new Set((w.data || []).filter((wish) => rankFor(wish.id)).map((wish) => wish.id))

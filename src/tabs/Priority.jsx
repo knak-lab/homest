@@ -10,6 +10,8 @@ export default function Priority({ ctx }) {
   const partner = ctx.members.find((m) => m.user_id !== me.user_id)
   const [wishes, setWishes] = useState([])
   const [ratings, setRatings] = useState({})
+  const [sorts, setSorts] = useState({})
+  const [reorder, setReorder] = useState(false)
   const [mode, setMode] = useState('me') // me | partner | agreed | compare
   const [openId, setOpenId] = useState(null)
 
@@ -20,9 +22,9 @@ export default function Priority({ ctx }) {
     ])
     if (w.error) return alert(w.error.message)
     setWishes(w.data)
-    const map = {}
-    r.data?.forEach((x) => { map[`${x.target_id}|${x.rater}`] = x.rank })
-    setRatings(map)
+    const map = {}; const so = {}
+    r.data?.forEach((x) => { map[`${x.target_id}|${x.rater}`] = x.rank; so[`${x.target_id}|${x.rater}`] = x.sort ?? 0 })
+    setRatings(map); setSorts(so)
   }, [hid])
 
   useEffect(() => {
@@ -38,10 +40,34 @@ export default function Priority({ ctx }) {
 
   const raterOf = (m) => (m === 'me' ? me.user_id : m === 'partner' ? partner?.user_id : 'agreed')
 
+  const sortOf = (id, rater) => sorts[`${id}|${rater}`] ?? 0
+  // そのレーンの並び順（並び替えた順 → 同じなら名前順）
+  const laneOf = (rk, rater) => items.filter((w) => rank(w.id, rater) === rk)
+    .sort((a, b) => sortOf(a.id, rater) - sortOf(b.id, rater) || a.title.localeCompare(b.title, 'ja'))
+
   const setRank = async (wishId, rater, value) => {
+    // 新しく入ったレーンでは一番下に置く
+    const nextSort = value ? Math.max(-1, ...laneOf(value, rater).filter((w) => w.id !== wishId).map((w) => sortOf(w.id, rater))) + 1 : 0
     setRatings((r) => ({ ...r, [`${wishId}|${rater}`]: value }))
+    setSorts((s) => ({ ...s, [`${wishId}|${rater}`]: nextSort }))
     const { error } = await supabase.from('ratings').upsert(
-      { household_id: hid, target_type: 'wish', target_id: wishId, rater, rank: value, updated_at: new Date().toISOString() },
+      { household_id: hid, target_type: 'wish', target_id: wishId, rater, rank: value, sort: nextSort, updated_at: new Date().toISOString() },
+      { onConflict: 'target_type,target_id,rater' },
+    )
+    if (error) { alert(error.message); load() }
+  }
+
+  // ▲▼で1つ上・下と入れ替える（レーン全体を 0,1,2… に振り直して保存）
+  const move = async (wishId, rater, dir) => {
+    const rk = rank(wishId, rater)
+    const lane = laneOf(rk, rater)
+    const i = lane.findIndex((w) => w.id === wishId); const j = i + dir
+    if (i < 0 || j < 0 || j >= lane.length) return
+    ;[lane[i], lane[j]] = [lane[j], lane[i]]
+    setSorts((s) => { const n = { ...s }; lane.forEach((w, k) => { n[`${w.id}|${rater}`] = k }); return n })
+    const now = new Date().toISOString()
+    const { error } = await supabase.from('ratings').upsert(
+      lane.map((w, k) => ({ household_id: hid, target_type: 'wish', target_id: w.id, rater, rank: rk, sort: k, updated_at: now })),
       { onConflict: 'target_type,target_id,rater' },
     )
     if (error) { alert(error.message); load() }
@@ -96,8 +122,17 @@ export default function Priority({ ctx }) {
 
         {mode !== 'compare' && items.length > 0 && (mode !== 'partner' || partner) && (
           <div className="space-y-4">
+            {(mode === 'me' || mode === 'agreed') && (
+              <div className="flex justify-end">
+                <button className={`min-h-9 rounded-full px-3 text-xs ${reorder ? 'bg-moss text-white' : 'border border-stone-300 bg-white text-stone-600'}`} onClick={() => setReorder((v) => !v)}>
+                  {reorder ? '✓ 並び替えを終える' : '↕ 並び替え'}
+                </button>
+              </div>
+            )}
             {[...RANKS, { id: null, label: '未分類', sub: 'まだ決めていない', cls: 'bg-stone-400 text-white' }].map((r) => {
-              const list = items.filter((w) => rank(w.id, raterOf(mode)) === r.id)
+              const rater = raterOf(mode)
+              const list = r.id ? laneOf(r.id, rater) : items.filter((w) => !rank(w.id, rater))
+              const sortable = reorder && r.id && (mode === 'me' || mode === 'agreed')
               return (
                 <section key={r.id ?? 'none'}>
                   <h3 className="mb-1.5 flex items-baseline gap-2">
@@ -105,11 +140,22 @@ export default function Priority({ ctx }) {
                     <span className="text-xs text-stone-500">{r.sub}・{list.length}件</span>
                   </h3>
                   <div className="space-y-1.5">
-                    {list.map((w) => (
-                      <button key={w.id} className="flex min-h-12 w-full flex-col items-start rounded-xl bg-white px-3 py-2 text-left shadow-sm" onClick={() => setOpenId(w.id)}>
-                        <span className="text-sm">{w.title}</span>
-                        {parentTitle(w) && <span className="text-[11px] text-stone-400">{parentTitle(w)} ›</span>}
-                      </button>
+                    {list.map((w, i) => (
+                      <div key={w.id} className="flex items-stretch gap-1.5">
+                        <button disabled={sortable} className="flex min-h-12 min-w-0 flex-1 items-center gap-2 rounded-xl bg-white px-3 py-2 text-left shadow-sm" onClick={() => setOpenId(w.id)}>
+                          {r.id && <span className="w-5 shrink-0 text-center text-xs font-bold text-stone-400">{i + 1}</span>}
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm">{w.title}</span>
+                            {parentTitle(w) && <span className="block text-[11px] text-stone-400">{parentTitle(w)} ›</span>}
+                          </span>
+                        </button>
+                        {sortable && (
+                          <div className="flex shrink-0 flex-col gap-1">
+                            <button disabled={i === 0} className="flex h-[1.4rem] w-10 items-center justify-center rounded-md bg-white text-xs shadow-sm disabled:opacity-30" onClick={() => move(w.id, rater, -1)}>▲</button>
+                            <button disabled={i === list.length - 1} className="flex h-[1.4rem] w-10 items-center justify-center rounded-md bg-white text-xs shadow-sm disabled:opacity-30" onClick={() => move(w.id, rater, 1)}>▼</button>
+                          </div>
+                        )}
+                      </div>
                     ))}
                   </div>
                 </section>
