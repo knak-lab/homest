@@ -2,59 +2,86 @@ import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
 // 種類ごとのひな形（「ひな形から追加」で、まだない項目だけ入る）
+// 重なりがないように、1項目＝1つの確認ごとにしている
 export const CHECKLIST_TEMPLATES = {
   land: [
     // 法規・権利
     '市街化調整区域なら：どの開発許可で家が建つ予定か（都市計画法の何条か・許可の見込み・期間）',
+    '用途地域・建ぺい率・容積率',
+    '建築条件の有無',
     '境界確定の有無（境界杭があるか）※未確定だと住宅ローンが組めない可能性',
     '測量図があるか（ない場合は測量費用が別途かかる）',
-    '用途地域・建ぺい率・容積率を確認',
-    '建築条件の有無',
     // 道路
     '接道：幅4m以上の道に2m以上接しているか',
     'その土地までの道に狭い所がないか（大型トラック・工事車両が入れるか）',
-    // 高さ・水
-    '敷地内の高低差（処理に大きな費用がかからないか）',
+    // 高さ・水・地盤
+    '敷地内の高低差（造成・擁壁に大きな費用がかからないか）',
     '道路より敷地が低くないか（雨水が入る・たまるおそれ）',
     '排水の勾配がとれる高さ関係か（敷地が広い場合）',
-    'ハザードマップ（洪水・土砂災害）を確認',
-    '地盤（地盤調査・造成・擁壁の有無）',
+    '地盤の強さ（地盤調査・地盤改良が必要か）',
+    'ハザードマップ（洪水・土砂災害）',
     // ライフライン
-    'ライフライン：上水道か井戸か／下水道か浄化槽か',
+    '水道・排水：上水道か井戸か／下水道か浄化槽か',
     '浄化槽の場合：処理した水を流す側溝が道にあるか',
     'ガス（都市ガスかプロパンか）・電気の引き込み',
     // 暮らし
-    '日当たり・眺望を現地で確認',
-    '周辺の騒音・におい・交通量',
+    '日当たり・眺望',
+    '朝・夜・休日にも現地を見る（騒音・におい・交通量・人通り）',
     '最寄り駅までと通勤時間を実際に確認',
     'スーパー・病院・学校までの距離',
-    '朝・夜・休日にも現地を見る',
     // お金
-    '諸費用（仲介手数料・登記・測量・造成など）の見積',
+    '土地代以外の諸費用の見積（仲介手数料・登記・各種申請など）',
   ],
   agency: [
     '担当者の名前と連絡先を控えた',
     '希望条件（エリア・広さ・予算）を伝えた',
     '未公開物件の紹介を依頼した',
-    '建築許可・法規の確認を依頼した',
+    '気になる土地の法規・建築許可の調査を依頼した',
     '仲介手数料を確認した',
-    '返信の速さ・対応の印象を確かめた',
-    '信用できそうか（説明が具体的か、リスクや不利な点も話してくれるか）',
+    '信用できそうか（説明が具体的か、リスクや不利な点も話してくれるか・返信の速さ）',
   ],
   builder: [
     '資料請求',
     'モデルハウス・見学会に行った',
-    '坪単価に含まれる範囲（標準仕様）を確認',
-    '断熱性能（UA値）を確認',
-    '気密性能（C値）を確認',
-    '耐震等級を確認',
-    '薪ストーブの施工実績を確認',
-    '保証・アフターサービスを確認',
-    '見積の内訳（本体・付帯工事・諸費用）を確認',
-    '工期を確認',
     '施工中の現場を見学',
+    '断熱性能（UA値）',
+    '気密性能（C値）',
+    '耐震等級',
+    '薪ストーブの施工実績',
+    '見積の内訳と坪単価に含まれる範囲（本体・付帯工事・諸費用・標準仕様）',
+    '工期',
+    '保証・アフターサービス',
     '担当者との相性',
   ],
+}
+
+// 以前のひな形の文言 → 今のひな形の文言（「ひな形から追加・整理」で置き換え、同じものはまとめる）
+const RENAMED = {
+  '市街化区域か（調整区域なら建築許可の見込み）': '市街化調整区域なら：どの開発許可で家が建つ予定か（都市計画法の何条か・許可の見込み・期間）',
+  '用途地域・建ぺい率・容積率を確認': '用途地域・建ぺい率・容積率',
+  '接道（道路の幅4m以上・2m以上接している）': '接道：幅4m以上の道に2m以上接しているか',
+  '境界・測量図の有無': '境界確定の有無（境界杭があるか）※未確定だと住宅ローンが組めない可能性',
+  '上下水道・ガスの引き込み状況': '水道・排水：上水道か井戸か／下水道か浄化槽か',
+  'ライフライン：上水道か井戸か／下水道か浄化槽か': '水道・排水：上水道か井戸か／下水道か浄化槽か',
+  '地盤（地盤調査・造成・擁壁の有無）': '地盤の強さ（地盤調査・地盤改良が必要か）',
+  '敷地内の高低差（処理に大きな費用がかからないか）': '敷地内の高低差（造成・擁壁に大きな費用がかからないか）',
+  'ハザードマップ（洪水・土砂災害）を確認': 'ハザードマップ（洪水・土砂災害）',
+  '日当たり・眺望を現地で確認': '日当たり・眺望',
+  '周辺の騒音・におい・交通量': '朝・夜・休日にも現地を見る（騒音・におい・交通量・人通り）',
+  '朝・夜・休日にも現地を見る': '朝・夜・休日にも現地を見る（騒音・におい・交通量・人通り）',
+  '諸費用（仲介手数料・登記・造成など）の見積': '土地代以外の諸費用の見積（仲介手数料・登記・各種申請など）',
+  '諸費用（仲介手数料・登記・測量・造成など）の見積': '土地代以外の諸費用の見積（仲介手数料・登記・各種申請など）',
+  '建築許可・法規の確認を依頼した': '気になる土地の法規・建築許可の調査を依頼した',
+  '返信の速さ・対応の印象を確かめた': '信用できそうか（説明が具体的か、リスクや不利な点も話してくれるか・返信の速さ）',
+  '信用できそうか（説明が具体的か、リスクや不利な点も話してくれるか）': '信用できそうか（説明が具体的か、リスクや不利な点も話してくれるか・返信の速さ）',
+  '坪単価に含まれる範囲（標準仕様）を確認': '見積の内訳と坪単価に含まれる範囲（本体・付帯工事・諸費用・標準仕様）',
+  '見積の内訳（本体・付帯工事・諸費用）を確認': '見積の内訳と坪単価に含まれる範囲（本体・付帯工事・諸費用・標準仕様）',
+  '断熱性能（UA値）を確認': '断熱性能（UA値）',
+  '気密性能（C値）を確認': '気密性能（C値）',
+  '耐震等級を確認': '耐震等級',
+  '薪ストーブの施工実績を確認': '薪ストーブの施工実績',
+  '保証・アフターサービスを確認': '保証・アフターサービス',
+  '工期を確認': '工期',
 }
 
 // 候補地・不動産会社・建築会社ごとのチェックリスト（ふたりで共有）
@@ -76,19 +103,49 @@ export default function Checklist({ ctx, targetType, targetId, onChange }) {
 
   const changed = () => { load(); onChange?.() }
 
-  const add = async (texts) => {
-    const rows = texts.map((t, i) => ({ household_id: hid, target_type: targetType, target_id: targetId, text: t, sort: items.length + i }))
+  const add = async (texts, base = items.length) => {
+    const rows = texts.map((t, i) => ({ household_id: hid, target_type: targetType, target_id: targetId, text: t, sort: base + i }))
     if (!rows.length) return
     const { error } = await supabase.from('checklist_items').insert(rows)
     if (error) return alert(error.message)
     changed()
   }
   const addOne = () => { const t = text.trim(); if (!t) return; setText(''); add([t]) }
-  const addTemplate = () => {
-    const have = new Set(items.map((i) => i.text))
-    const list = CHECKLIST_TEMPLATES[targetType].filter((t) => !have.has(t))
-    if (!list.length) return alert('ひな形の項目はすべて入っています')
-    add(list)
+  // 古い文言を今の文言に置き換え、同じ内容が2つあれば1つにまとめて（どちらかに✓があれば✓を残す）、足りない項目を足す
+  const addTemplate = async () => {
+    const byText = {}
+    const updates = []; const deletes = []
+    for (const it of items) {
+      const t = RENAMED[it.text] || it.text
+      const keep = byText[t]
+      if (keep) {
+        deletes.push(it.id)
+        if (it.done && !keep.done) { keep.done = true; keep.done_by = it.done_by; keep.done_at = it.done_at; keep.dirty = true }
+      } else {
+        byText[t] = { ...it, text: t, dirty: t !== it.text }
+      }
+    }
+    Object.values(byText).filter((x) => x.dirty).forEach((x) => updates.push(x))
+    for (const u of updates) {
+      await supabase.from('checklist_items').update({ text: u.text, done: u.done, done_by: u.done_by ?? null, done_at: u.done_at ?? null }).eq('id', u.id)
+    }
+    if (deletes.length) await supabase.from('checklist_items').delete().in('id', deletes)
+    const tpl = CHECKLIST_TEMPLATES[targetType]
+    const missingTexts = tpl.filter((t) => !byText[t])
+    // ひな形の順に並べ、自分で足した項目はその後ろに
+    const kept = Object.values(byText)
+    const orderOf = (t) => { const i = tpl.indexOf(t); return i >= 0 ? i : 1000 }
+    await Promise.all(kept.map((x, k) => {
+      const sort = orderOf(x.text) === 1000 ? 1000 + k : orderOf(x.text)
+      return x.sort === sort ? null : supabase.from('checklist_items').update({ sort }).eq('id', x.id)
+    }))
+    if (missingTexts.length) {
+      const rows = missingTexts.map((t) => ({ household_id: hid, target_type: targetType, target_id: targetId, text: t, sort: orderOf(t) }))
+      const { error } = await supabase.from('checklist_items').insert(rows)
+      if (error) alert(error.message)
+    }
+    changed()
+    if (!missingTexts.length && !updates.length && !deletes.length) alert('ひな形の項目はすべて入っています')
   }
   const toggle = async (it) => {
     const done = !it.done
@@ -140,7 +197,7 @@ export default function Checklist({ ctx, targetType, targetId, onChange }) {
         <button className="rounded-lg bg-stone-800 px-3 text-sm text-white" onClick={addOne}>追加</button>
       </div>
       <button className="min-h-10 w-full rounded-lg border border-dashed border-stone-300 text-xs text-stone-600" onClick={addTemplate}>
-        ＋ ひな形から追加（{targetType === 'land' ? '土地の確認事項' : targetType === 'agency' ? '不動産会社とのやりとり' : '建築会社の確認事項'}）
+        ＋ ひな形から追加・整理（{targetType === 'land' ? '土地の確認事項' : targetType === 'agency' ? '不動産会社とのやりとり' : '建築会社の確認事項'}）
       </button>
     </div>
   )
