@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import BottomSheet from '../components/BottomSheet'
 import Attachments from '../components/Attachments'
 import Matrix, { EvalSheet, useEval } from '../components/Matrix'
+import Checklist, { loadChecklistCounts } from '../components/Checklist'
 
 export const LAND_STATUS = ['検討中', '見学予定', '見学済', '申込検討', '見送り']
 const STATUS_CLS = {
@@ -18,6 +19,7 @@ export default function Lands({ ctx }) {
   const [areas, setAreas] = useState([])
   const [agencies, setAgencies] = useState([])
   const [thumbs, setThumbs] = useState({})
+  const [checks, setChecks] = useState({})
   const [openId, setOpenId] = useState(null) // 'new' or id
   const [manage, setManage] = useState(null) // 'area' | 'agency' | null
   const [showRejected, setShowRejected] = useState(false)
@@ -32,6 +34,7 @@ export default function Lands({ ctx }) {
     ])
     if (l.error) return alert(l.error.message)
     setLands(l.data); setAreas(a.data || []); setAgencies(g.data || [])
+    loadChecklistCounts(hid, 'land').then(setChecks)
     const first = {}
     img.data?.forEach((r) => { if (!first[r.target_id]) first[r.target_id] = r.storage_path })
     const paths = Object.values(first)
@@ -105,6 +108,7 @@ export default function Lands({ ctx }) {
                           {l.price != null && l.tsubo ? <span className="text-stone-400">（坪{Math.round((l.price / l.tsubo) * 10) / 10}万）</span> : null}
                         </p>
                         <span className={`mt-1 inline-block rounded px-1.5 py-0.5 text-[10px] ${STATUS_CLS[l.status] || STATUS_CLS['検討中']}`}>{l.status}</span>
+                        {checks[l.id] && <span className="mt-1 ml-1 inline-block rounded bg-stone-100 px-1.5 py-0.5 text-[10px] text-stone-600">☑ {checks[l.id].done}/{checks[l.id].total}</span>}
                       </div>
                       {ev.criteria.length > 0 && (
                         <div className="flex shrink-0 gap-1 self-center">
@@ -242,6 +246,15 @@ function LandSheet({ ctx, land, areas, agencies, reload, onClose }) {
         <Field label="メモ"><textarea className={`${input} min-h-24`} value={f.note} onChange={set('note')} placeholder="見学の感想、気になる点など" /></Field>
 
         <section>
+          <p className="mb-2 font-bold">チェックリスト</p>
+          {id ? (
+            <Checklist ctx={ctx} targetType="land" targetId={id} onChange={reload} />
+          ) : (
+            <button className="min-h-11 w-full rounded-lg border border-dashed border-stone-400 text-xs" onClick={save}>先に保存すると、チェックリストを使えます</button>
+          )}
+        </section>
+
+        <section>
           <p className="mb-2 font-bold">写真・リンク</p>
           {id ? (
             <Attachments householdId={hid} targetType="land" targetId={id} onChange={reload} />
@@ -338,6 +351,12 @@ function GroupEdit({ ctx, kind, row, onSave, onDelete, onBack }) {
         </>
       )}
       <textarea className={`${input} min-h-24`} placeholder={kind === 'area' ? 'エリアの印象（通勤、自然、買い物、災害リスクなど）' : '対応の印象など'} value={note} onChange={(e) => setNote(e.target.value)} />
+      {kind === 'agency' && (
+        <>
+          <p className="font-bold">チェックリスト</p>
+          <Checklist ctx={ctx} targetType="agency" targetId={row.id} />
+        </>
+      )}
       <p className="font-bold">写真・リンク</p>
       <Attachments householdId={ctx.household.id} targetType={kind} targetId={row.id} />
       <button className="min-h-11 w-full text-rose-600" onClick={onDelete}>削除</button>

@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import BottomSheet from '../components/BottomSheet'
 import Attachments from '../components/Attachments'
 import Matrix, { EvalSheet, useEval } from '../components/Matrix'
+import Checklist, { loadChecklistCounts } from '../components/Checklist'
 
 export const BUILDER_TYPES = ['ハウスメーカー', '設計事務所', '工務店', 'リノベ会社']
 export const BUILDER_STATUS = ['情報収集', '問い合わせ済', '打ち合わせ中', '見積もり中', '見送り']
@@ -18,6 +19,7 @@ export default function Builders({ ctx }) {
   const [filter, setFilter] = useState('すべて')
   const [rows, setRows] = useState([])
   const [thumbs, setThumbs] = useState({})
+  const [checks, setChecks] = useState({})
   const [openId, setOpenId] = useState(null) // 'new' or id
   const [showRejected, setShowRejected] = useState(false)
   const ev = useEval(ctx, 'builder')
@@ -30,6 +32,7 @@ export default function Builders({ ctx }) {
     ])
     if (b.error) return alert(b.error.message)
     setRows(b.data)
+    loadChecklistCounts(hid, 'builder').then(setChecks)
     const first = {}
     img.data?.forEach((r) => { if (!first[r.target_id]) first[r.target_id] = r.storage_path })
     const paths = Object.values(first)
@@ -89,6 +92,7 @@ export default function Builders({ ctx }) {
                         <p className="text-xs text-stone-600">{b.tsubo_price != null ? `坪${b.tsubo_price}万円` : '坪単価 —'}</p>
                         <p className="text-xs text-stone-600">{b.estimate != null ? `見積 ${Number(b.estimate).toLocaleString()}万円` : '見積 —'}</p>
                         <span className={`mt-1 inline-block rounded px-1.5 py-0.5 text-[10px] ${STATUS_CLS[b.status] || STATUS_CLS['情報収集']}`}>{b.status}</span>
+                        {checks[b.id] && <span className="mt-1 ml-1 inline-block rounded bg-stone-100 px-1.5 py-0.5 text-[10px] text-stone-600">☑ {checks[b.id].done}/{checks[b.id].total}</span>}
                       </div>
                       {ev.criteria.length > 0 && (
                         <div className="flex shrink-0 gap-1 self-center">
@@ -214,6 +218,15 @@ function BuilderSheet({ ctx, row, defaultType, reload, onClose }) {
           </div>
         </Field>
         <Field label="メモ"><textarea className={`${input} min-h-24`} value={f.note} onChange={set('note')} placeholder="打ち合わせの印象、得意なこと、気になる点など" /></Field>
+
+        <section>
+          <p className="mb-2 font-bold">チェックリスト</p>
+          {id ? (
+            <Checklist ctx={ctx} targetType="builder" targetId={id} onChange={reload} />
+          ) : (
+            <button className="min-h-11 w-full rounded-lg border border-dashed border-stone-400 text-xs" onClick={save}>先に保存すると、チェックリストを使えます</button>
+          )}
+        </section>
 
         <section>
           <p className="mb-2 font-bold">写真・リンク</p>
