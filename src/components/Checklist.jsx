@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
+import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core'
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { supabase } from '../lib/supabase'
+import BottomSheet from './BottomSheet'
 
 // 種類ごとのひな形（カテゴリ別）。「ひな形から追加・整理」で、まだない項目だけ入る
 // 重なりがないように、1項目＝1つの確認ごとにしている
@@ -112,6 +116,15 @@ export default function Checklist({ ctx, targetType, targetId, onChange }) {
   const [editing, setEditing] = useState(false)
   const [missing, setMissing] = useState(false)
   const [open, setOpen] = useState({})
+  const [pending, setPending] = useState(null) // 追加する文言（カテゴリを聞いている間）
+  const [moving, setMoving] = useState(null) // カテゴリを変える項目
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
+
+  // ひな形のカテゴリ（文言から決まる）。自分で足した項目は保存したカテゴリ、なければ「その他」
+  const catOf = {}
+  CHECKLIST_CATEGORIES[targetType].forEach(([name, list]) => list.forEach((t) => { catOf[t] = name }))
+  const groupOf = (i) => i.category || catOf[i.text] || OTHER
+  const catNames = [...CHECKLIST_CATEGORIES[targetType].map(([name]) => name), OTHER]
 
   const load = useCallback(async () => {
     const { data, error } = await supabase.from('checklist_items').select('*')
@@ -124,6 +137,14 @@ export default function Checklist({ ctx, targetType, targetId, onChange }) {
 
   const changed = () => { load(); onChange?.() }
 
+  // カテゴリ列がまだない（SQL 0007 未実行）ときは、カテゴリなしで保存する
+  const noCategoryColumn = (e) => /'category' column/.test(e?.message || '')
+  const insertRows = async (rows) => {
+    let { error } = await supabase.from('checklist_items').insert(rows)
+    if (error && noCategoryColumn(error)) ({ error } = await supabase.from('checklist_items').insert(rows.map(({ category: _c, ...r }) => r)))
+    return error
+  }
+
   const add = async (texts, base = items.length) => {
     const rows = texts.map((t, i) => ({ household_id: hid, target_type: targetType, target_id: targetId, text: t, sort: base + i }))
     if (!rows.length) return
@@ -131,7 +152,32 @@ export default function Checklist({ ctx, targetType, targetId, onChange }) {
     if (error) return alert(error.message)
     changed()
   }
-  const addOne = () => { const t = text.trim(); if (!t) return; setText(''); add([t]) }
+  const addOne = () => { const t = text.trim(); if (!t) return; setPending(t) }
+  const addCustom = async (category) => {
+    const t = pending; setPending(null); setText('')
+    const inGroup = items.filter((i) => groupOf(i) === category)
+    const sort = Math.max(-1, ...inGroup.map((i) => i.sort ?? 0)) + 1
+    const error = await insertRows([{ household_id: hid, target_type: targetType, target_id: targetId, text: t, category, sort }])
+    if (error) return alert(error.message)
+    setOpen((o) => ({ ...o, [category]: true }))
+    changed()
+  }
+  const changeCategory = async (it, category) => {
+    setMoving(null)
+    const inGroup = items.filter((i) => groupOf(i) === category && i.id !== it.id)
+    const sort = Math.max(-1, ...inGroup.map((i) => i.sort ?? 0)) + 1
+    const { error } = await supabase.from('checklist_items').update({ category, sort }).eq('id', it.id)
+    if (error) return alert(noCategoryColumn(error) ? 'カテゴリを変えるには、SupabaseでSQL「0007_checklist_category.sql」を実行してください。' : error.message)
+    setOpen((o) => ({ ...o, [category]: true }))
+    changed()
+  }
+  // ドラッグで並べ替えたカテゴリ内の順番を保存
+  const reorder = async (list, from, to) => {
+    const next = arrayMove(list, from, to)
+    setItems((xs) => xs.map((x) => { const k = next.findIndex((n) => n.id === x.id); return k >= 0 ? { ...x, sort: k } : x }))
+    await Promise.all(next.map((x, k) => (x.sort === k ? null : supabase.from('checklist_items').update({ sort: k }).eq('id', x.id))))
+    onChange?.()
+  }
   // 古い文言を今の文言に置き換え、同じ内容が2つあれば1つにまとめて（どちらかに✓があれば✓を残す）、足りない項目を足す
   const addTemplate = async () => {
     const byText = {}
@@ -161,8 +207,8 @@ export default function Checklist({ ctx, targetType, targetId, onChange }) {
       return x.sort === sort ? null : supabase.from('checklist_items').update({ sort }).eq('id', x.id)
     }))
     if (missingTexts.length) {
-      const rows = missingTexts.map((t) => ({ household_id: hid, target_type: targetType, target_id: targetId, text: t, sort: orderOf(t) }))
-      const { error } = await supabase.from('checklist_items').insert(rows)
+      const rows = missingTexts.map((t) => ({ household_id: hid, target_type: targetType, target_id: targetId, text: t, sort: orderOf(t), category: catOf[t] }))
+      const error = await insertRows(rows)
       if (error) alert(error.message)
     }
     changed()
@@ -186,11 +232,8 @@ export default function Checklist({ ctx, targetType, targetId, onChange }) {
 
   const done = items.filter((i) => i.done).length
   const who = (uid) => ctx.members.find((m) => m.user_id === uid)?.display_name
-  // ひな形のカテゴリに振り分け（自分で足した項目は「その他」）
-  const catOf = {}
-  CHECKLIST_CATEGORIES[targetType].forEach(([name, list]) => list.forEach((t) => { catOf[t] = name }))
-  const groups = [...CHECKLIST_CATEGORIES[targetType].map(([name]) => name), OTHER]
-    .map((name) => ({ name, items: items.filter((i) => (catOf[i.text] || OTHER) === name) }))
+  const groups = catNames
+    .map((name) => ({ name, items: items.filter((i) => groupOf(i) === name).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0)) }))
     .filter((g) => g.items.length)
   const allOpen = groups.length > 0 && groups.every((g) => open[g.name])
 
@@ -202,7 +245,7 @@ export default function Checklist({ ctx, targetType, targetId, onChange }) {
             <div className="h-full rounded-full bg-moss" style={{ width: `${(done / items.length) * 100}%` }} />
           </div>
           <span className="text-xs text-stone-500">{done}/{items.length}</span>
-          <button className="text-xs text-stone-500 underline" onClick={() => setEditing((v) => !v)}>{editing ? '完了' : '編集'}</button>
+          <button className="text-xs text-stone-500 underline" onClick={() => setEditing((v) => !v)}>{editing ? '完了' : '編集・並べ替え'}</button>
         </div>
       )}
       {items.length === 0 && <p className="rounded-xl border border-stone-200 p-3 text-xs text-stone-400">まだ項目がありません。下の「ひな形から追加・整理」で定番の確認項目を入れられます。</p>}
@@ -213,6 +256,7 @@ export default function Checklist({ ctx, targetType, targetId, onChange }) {
           </button>
         </div>
       )}
+      {editing && <p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800">≡ をつかんで上下に動かすと並べ替え、項目名をタップするとカテゴリを変えられます。✕で削除。</p>}
       <div className="space-y-1.5">
         {groups.map((g) => {
           const isOpen = open[g.name]
@@ -226,18 +270,20 @@ export default function Checklist({ ctx, targetType, targetId, onChange }) {
                 <span className={`text-xs ${complete ? 'font-bold text-moss' : 'text-stone-500'}`}>{complete ? '✓ ' : ''}{d}/{g.items.length}</span>
               </button>
               {isOpen && (
-                <ul className="divide-y divide-stone-100 border-t border-stone-200">
-                  {g.items.map((it) => (
-                    <li key={it.id} className="flex items-center gap-2 px-2">
-                      <button className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left" onClick={() => !editing && toggle(it)}>
-                        <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border text-[11px] ${it.done ? 'border-moss bg-moss text-white' : 'border-stone-300 bg-white'}`}>{it.done ? '✓' : ''}</span>
-                        <span className={`min-w-0 flex-1 text-sm ${it.done ? 'text-stone-400 line-through' : ''}`}>{it.text}</span>
-                        {it.done && who(it.done_by) && <span className="shrink-0 text-[10px] text-stone-400">{who(it.done_by)}</span>}
-                      </button>
-                      {editing && <button className="px-2 text-stone-400" onClick={() => remove(it)}>✕</button>}
-                    </li>
-                  ))}
-                </ul>
+                <DndContext sensors={sensors} collisionDetection={closestCenter}
+                  onDragEnd={({ active, over }) => {
+                    if (!over || active.id === over.id) return
+                    reorder(g.items, g.items.findIndex((x) => x.id === active.id), g.items.findIndex((x) => x.id === over.id))
+                  }}>
+                  <SortableContext items={g.items.map((x) => x.id)} strategy={verticalListSortingStrategy}>
+                    <ul className="divide-y divide-stone-100 border-t border-stone-200">
+                      {g.items.map((it) => (
+                        <CheckRow key={it.id} it={it} editing={editing} who={who(it.done_by)}
+                          onToggle={() => toggle(it)} onMove={() => setMoving(it)} onRemove={() => remove(it)} />
+                      ))}
+                    </ul>
+                  </SortableContext>
+                </DndContext>
               )}
             </div>
           )
@@ -252,7 +298,45 @@ export default function Checklist({ ctx, targetType, targetId, onChange }) {
       <button className="min-h-10 w-full rounded-lg border border-dashed border-stone-300 text-xs text-stone-600" onClick={addTemplate}>
         ＋ ひな形から追加・整理（{targetType === 'land' ? '土地の確認事項' : targetType === 'agency' ? '不動産会社とのやりとり' : '建築会社の確認事項'}）
       </button>
+      {pending && (
+        <CategorySheet title={`「${pending}」をどのカテゴリに入れますか？`} names={catNames} onPick={addCustom} onClose={() => setPending(null)} />
+      )}
+      {moving && (
+        <CategorySheet title={`「${moving.text}」のカテゴリを変える`} names={catNames} current={groupOf(moving)} onPick={(c) => changeCategory(moving, c)} onClose={() => setMoving(null)} />
+      )}
     </div>
+  )
+}
+
+// 1項目。編集中は ≡ でドラッグ、文言タップでカテゴリ変更、✕で削除
+function CheckRow({ it, editing, who, onToggle, onMove, onRemove }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: it.id, disabled: !editing })
+  const style = { transform: CSS.Transform.toString(transform), transition, position: 'relative', zIndex: isDragging ? 10 : undefined }
+  return (
+    <li ref={setNodeRef} style={style} className={`flex items-center gap-1 bg-white px-2 ${isDragging ? 'shadow-lg ring-2 ring-moss' : ''}`}>
+      {editing && (
+        <button ref={setActivatorNodeRef} {...attributes} {...listeners} aria-label="並べ替え" className="flex h-11 w-8 shrink-0 items-center justify-center text-lg text-stone-400" style={{ touchAction: 'none' }}>≡</button>
+      )}
+      <button className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left" onClick={editing ? onMove : onToggle}>
+        {!editing && <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border text-[11px] ${it.done ? 'border-moss bg-moss text-white' : 'border-stone-300 bg-white'}`}>{it.done ? '✓' : ''}</span>}
+        <span className={`min-w-0 flex-1 text-sm ${it.done ? 'text-stone-400 line-through' : ''}`}>{it.text}</span>
+        {!editing && it.done && who && <span className="shrink-0 text-[10px] text-stone-400">{who}</span>}
+        {editing && <span className="shrink-0 text-[10px] text-stone-400">カテゴリ ›</span>}
+      </button>
+      {editing && <button className="px-2 text-stone-400" onClick={onRemove}>✕</button>}
+    </li>
+  )
+}
+
+function CategorySheet({ title, names, current, onPick, onClose }) {
+  return (
+    <BottomSheet open title={title} onClose={onClose}>
+      <div className="grid grid-cols-2 gap-2 text-sm">
+        {names.map((n) => (
+          <button key={n} className={`min-h-12 rounded-xl border-2 px-2 ${current === n ? 'border-moss bg-moss text-white' : 'border-stone-200'}`} onClick={() => onPick(n)}>{n}</button>
+        ))}
+      </div>
+    </BottomSheet>
   )
 }
 
