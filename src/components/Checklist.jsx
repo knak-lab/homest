@@ -1,59 +1,79 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
-// 種類ごとのひな形（「ひな形から追加」で、まだない項目だけ入る）
+// 種類ごとのひな形（カテゴリ別）。「ひな形から追加・整理」で、まだない項目だけ入る
 // 重なりがないように、1項目＝1つの確認ごとにしている
-export const CHECKLIST_TEMPLATES = {
+export const CHECKLIST_CATEGORIES = {
   land: [
-    // 法規・権利
-    '市街化調整区域なら：どの開発許可で家が建つ予定か（都市計画法の何条か・許可の見込み・期間）',
-    '用途地域・建ぺい率・容積率',
-    '建築条件の有無',
-    '境界確定の有無（境界杭があるか）※未確定だと住宅ローンが組めない可能性',
-    '測量図があるか（ない場合は測量費用が別途かかる）',
-    // 道路
-    '接道：幅4m以上の道に2m以上接しているか',
-    'その土地までの道に狭い所がないか（大型トラック・工事車両が入れるか）',
-    // 高さ・水・地盤
-    '敷地内の高低差（造成・擁壁に大きな費用がかからないか）',
-    '道路より敷地が低くないか（雨水が入る・たまるおそれ）',
-    '排水の勾配がとれる高さ関係か（敷地が広い場合）',
-    '地盤の強さ（地盤調査・地盤改良が必要か）',
-    'ハザードマップ（洪水・土砂災害）',
-    // ライフライン
-    '水道・排水：上水道か井戸か／下水道か浄化槽か',
-    '浄化槽の場合：処理した水を流す側溝が道にあるか',
-    'ガス（都市ガスかプロパンか）・電気の引き込み',
-    // 暮らし
-    '日当たり・眺望',
-    '朝・夜・休日にも現地を見る（騒音・におい・交通量・人通り）',
-    '最寄り駅までと通勤時間を実際に確認',
-    'スーパー・病院・学校までの距離',
-    // お金
-    '土地代以外の諸費用の見積（仲介手数料・登記・各種申請など）',
+    ['法規・権利', [
+      '市街化調整区域なら：どの開発許可で家が建つ予定か（都市計画法の何条か・許可の見込み・期間）',
+      '用途地域・建ぺい率・容積率',
+      '建築条件の有無',
+      '境界確定の有無（境界杭があるか）※未確定だと住宅ローンが組めない可能性',
+      '測量図があるか（ない場合は測量費用が別途かかる）',
+    ]],
+    ['道路', [
+      '接道：幅4m以上の道に2m以上接しているか',
+      'その土地までの道に狭い所がないか（大型トラック・工事車両が入れるか）',
+    ]],
+    ['高さ・水・地盤', [
+      '敷地内の高低差（造成・擁壁に大きな費用がかからないか）',
+      '道路より敷地が低くないか（雨水が入る・たまるおそれ）',
+      '排水の勾配がとれる高さ関係か（敷地が広い場合）',
+      '地盤の強さ（地盤調査・地盤改良が必要か）',
+      'ハザードマップ（洪水・土砂災害）',
+    ]],
+    ['ライフライン', [
+      '水道・排水：上水道か井戸か／下水道か浄化槽か',
+      '浄化槽の場合：処理した水を流す側溝が道にあるか',
+      'ガス（都市ガスかプロパンか）・電気の引き込み',
+    ]],
+    ['暮らし・周辺', [
+      '日当たり・眺望',
+      '朝・夜・休日にも現地を見る（騒音・におい・交通量・人通り）',
+      '最寄り駅までと通勤時間を実際に確認',
+      'スーパー・病院・学校までの距離',
+    ]],
+    ['お金', [
+      '土地代以外の諸費用の見積（仲介手数料・登記・各種申請など）',
+    ]],
   ],
   agency: [
-    '担当者の名前と連絡先を控えた',
-    '希望条件（エリア・広さ・予算）を伝えた',
-    '未公開物件の紹介を依頼した',
-    '気になる土地の法規・建築許可の調査を依頼した',
-    '仲介手数料を確認した',
-    '信用できそうか（説明が具体的か、リスクや不利な点も話してくれるか・返信の速さ）',
+    ['伝える・頼む', [
+      '希望条件（エリア・広さ・予算）を伝えた',
+      '未公開物件の紹介を依頼した',
+      '気になる土地の法規・建築許可の調査を依頼した',
+    ]],
+    ['確かめる', [
+      '担当者の名前と連絡先を控えた',
+      '仲介手数料を確認した',
+      '信用できそうか（説明が具体的か、リスクや不利な点も話してくれるか・返信の速さ）',
+    ]],
   ],
   builder: [
-    '資料請求',
-    'モデルハウス・見学会に行った',
-    '施工中の現場を見学',
-    '断熱性能（UA値）',
-    '気密性能（C値）',
-    '耐震等級',
-    '薪ストーブの施工実績',
-    '見積の内訳と坪単価に含まれる範囲（本体・付帯工事・諸費用・標準仕様）',
-    '工期',
-    '保証・アフターサービス',
-    '担当者との相性',
+    ['知る・見る', [
+      '資料請求',
+      'モデルハウス・見学会に行った',
+      '施工中の現場を見学',
+      '担当者との相性',
+    ]],
+    ['性能', [
+      '断熱性能（UA値）',
+      '気密性能（C値）',
+      '耐震等級',
+      '薪ストーブの施工実績',
+    ]],
+    ['お金・契約', [
+      '見積の内訳と坪単価に含まれる範囲（本体・付帯工事・諸費用・標準仕様）',
+      '工期',
+      '保証・アフターサービス',
+    ]],
   ],
 }
+export const CHECKLIST_TEMPLATES = Object.fromEntries(
+  Object.entries(CHECKLIST_CATEGORIES).map(([k, cats]) => [k, cats.flatMap(([, list]) => list)]),
+)
+const OTHER = 'その他（自分で追加）'
 
 // 以前のひな形の文言 → 今のひな形の文言（「ひな形から追加・整理」で置き換え、同じものはまとめる）
 const RENAMED = {
@@ -91,6 +111,7 @@ export default function Checklist({ ctx, targetType, targetId, onChange }) {
   const [text, setText] = useState('')
   const [editing, setEditing] = useState(false)
   const [missing, setMissing] = useState(false)
+  const [open, setOpen] = useState({})
 
   const load = useCallback(async () => {
     const { data, error } = await supabase.from('checklist_items').select('*')
@@ -165,6 +186,13 @@ export default function Checklist({ ctx, targetType, targetId, onChange }) {
 
   const done = items.filter((i) => i.done).length
   const who = (uid) => ctx.members.find((m) => m.user_id === uid)?.display_name
+  // ひな形のカテゴリに振り分け（自分で足した項目は「その他」）
+  const catOf = {}
+  CHECKLIST_CATEGORIES[targetType].forEach(([name, list]) => list.forEach((t) => { catOf[t] = name }))
+  const groups = [...CHECKLIST_CATEGORIES[targetType].map(([name]) => name), OTHER]
+    .map((name) => ({ name, items: items.filter((i) => (catOf[i.text] || OTHER) === name) }))
+    .filter((g) => g.items.length)
+  const allOpen = groups.length > 0 && groups.every((g) => open[g.name])
 
   return (
     <div className="space-y-2">
@@ -177,19 +205,44 @@ export default function Checklist({ ctx, targetType, targetId, onChange }) {
           <button className="text-xs text-stone-500 underline" onClick={() => setEditing((v) => !v)}>{editing ? '完了' : '編集'}</button>
         </div>
       )}
-      <ul className="divide-y divide-stone-100 rounded-xl border border-stone-200">
-        {items.map((it) => (
-          <li key={it.id} className="flex items-center gap-2 px-2">
-            <button className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left" onClick={() => !editing && toggle(it)}>
-              <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border text-[11px] ${it.done ? 'border-moss bg-moss text-white' : 'border-stone-300 bg-white'}`}>{it.done ? '✓' : ''}</span>
-              <span className={`min-w-0 flex-1 text-sm ${it.done ? 'text-stone-400 line-through' : ''}`}>{it.text}</span>
-              {it.done && who(it.done_by) && <span className="shrink-0 text-[10px] text-stone-400">{who(it.done_by)}</span>}
-            </button>
-            {editing && <button className="px-2 text-stone-400" onClick={() => remove(it)}>✕</button>}
-          </li>
-        ))}
-        {items.length === 0 && <li className="p-3 text-xs text-stone-400">まだ項目がありません</li>}
-      </ul>
+      {items.length === 0 && <p className="rounded-xl border border-stone-200 p-3 text-xs text-stone-400">まだ項目がありません。下の「ひな形から追加・整理」で定番の確認項目を入れられます。</p>}
+      {groups.length > 0 && (
+        <div className="flex justify-end">
+          <button className="text-[11px] text-stone-500 underline" onClick={() => setOpen(allOpen ? {} : Object.fromEntries(groups.map((g) => [g.name, true])))}>
+            {allOpen ? 'すべてたたむ' : 'すべて開く'}
+          </button>
+        </div>
+      )}
+      <div className="space-y-1.5">
+        {groups.map((g) => {
+          const isOpen = open[g.name]
+          const d = g.items.filter((i) => i.done).length
+          const complete = d === g.items.length
+          return (
+            <div key={g.name} className="overflow-hidden rounded-xl border border-stone-200">
+              <button className={`flex min-h-11 w-full items-center gap-2 px-3 text-left ${complete ? 'bg-moss/10' : 'bg-stone-50'}`} onClick={() => setOpen((o) => ({ ...o, [g.name]: !o[g.name] }))}>
+                <span className="text-xs text-stone-400">{isOpen ? '▾' : '▸'}</span>
+                <span className="min-w-0 flex-1 truncate text-sm font-bold">{g.name}</span>
+                <span className={`text-xs ${complete ? 'font-bold text-moss' : 'text-stone-500'}`}>{complete ? '✓ ' : ''}{d}/{g.items.length}</span>
+              </button>
+              {isOpen && (
+                <ul className="divide-y divide-stone-100 border-t border-stone-200">
+                  {g.items.map((it) => (
+                    <li key={it.id} className="flex items-center gap-2 px-2">
+                      <button className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left" onClick={() => !editing && toggle(it)}>
+                        <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border text-[11px] ${it.done ? 'border-moss bg-moss text-white' : 'border-stone-300 bg-white'}`}>{it.done ? '✓' : ''}</span>
+                        <span className={`min-w-0 flex-1 text-sm ${it.done ? 'text-stone-400 line-through' : ''}`}>{it.text}</span>
+                        {it.done && who(it.done_by) && <span className="shrink-0 text-[10px] text-stone-400">{who(it.done_by)}</span>}
+                      </button>
+                      {editing && <button className="px-2 text-stone-400" onClick={() => remove(it)}>✕</button>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )
+        })}
+      </div>
       <div className="flex gap-2">
         <input className="min-w-0 flex-1 rounded-lg border border-stone-300 px-3 py-2 text-sm" placeholder="項目を追加"
           value={text} enterKeyHint="done" onChange={(e) => setText(e.target.value)}
