@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import imageCompression from 'browser-image-compression'
 import { supabase } from '../lib/supabase'
+import { linkKind } from '../lib/linkKind'
 
 // 要望・土地・建物などに共通で使う「リンク・画像」の添付欄
 export default function Attachments({ householdId, targetType, targetId, readOnly = false, onChange }) {
@@ -101,14 +102,21 @@ export default function Attachments({ householdId, targetType, targetId, readOnl
 
       {links.length > 0 && (
         <ul className="space-y-1.5">
-          {links.map((a) => (
-            <li key={a.id} className="flex items-center gap-2 rounded-lg bg-stone-50 px-3 py-2">
-              <a href={a.url} target="_blank" rel="noreferrer" className="min-w-0 flex-1 text-sm text-blue-700 underline">
-                <span className="block truncate">{a.caption || a.url}</span>
+          {[...links].sort((x, y) => (linkKind(x.url).kind === 'photos' ? 0 : 1) - (linkKind(y.url).kind === 'photos' ? 0 : 1)).map((a) => {
+            const k = linkKind(a.url)
+            return (
+            <li key={a.id} className={`flex items-center gap-2 rounded-lg px-3 py-2 ${k.cls}`}>
+              <a href={a.url} target="_blank" rel="noreferrer" className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+                <span className="text-lg">{k.icon}</span>
+                <span className="min-w-0 flex-1">
+                  <span className={`block truncate ${k.kind === 'link' ? 'underline' : 'font-bold'}`}>{a.caption || (k.kind === 'link' ? a.url : k.label)}</span>
+                  {k.kind !== 'link' && <span className="block truncate text-[11px] opacity-70">{a.caption ? k.label : 'タップで開く'}</span>}
+                </span>
               </a>
               {!readOnly && <button className="px-2 text-stone-400" onClick={() => remove(a)}>✕</button>}
             </li>
-          ))}
+            )
+          })}
         </ul>
       )}
 
@@ -125,7 +133,7 @@ export default function Attachments({ householdId, targetType, targetId, readOnl
           <div className="flex gap-2">
             <input
               className="min-w-0 flex-1 rounded-lg border border-stone-300 px-3 py-2 text-sm"
-              placeholder="URLを貼り付け"
+              placeholder="URL（Googleフォトの共有アルバムも可）"
               inputMode="url"
               value={linkUrl}
               onChange={(e) => setLinkUrl(e.target.value)}
@@ -138,6 +146,7 @@ export default function Attachments({ householdId, targetType, targetId, readOnl
           <button disabled={busy} className="min-h-11 w-full rounded-lg border border-dashed border-stone-400 text-sm disabled:opacity-40" onClick={() => fileRef.current?.click()}>
             {busy ? 'アップロード中…' : '＋ 画像を追加（写真・スクショ）'}
           </button>
+          <p className="text-[11px] leading-relaxed text-stone-400">🎬 動画は、Googleフォトで見学ごとに共有アルバムを作り、「共有」→「リンクを作成」で出たURLを上に貼ってください。</p>
         </div>
       )}
 

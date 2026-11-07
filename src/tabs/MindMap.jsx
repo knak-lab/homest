@@ -7,6 +7,7 @@ import { supabase } from '../lib/supabase'
 import { NODE_COLORS } from '../lib/constants'
 import BottomSheet from '../components/BottomSheet'
 import Attachments from '../components/Attachments'
+import { linkKind } from '../lib/linkKind'
 
 // ───────── 子ノードの自動配置（360°放射状） ─────────
 const angDist = (a, b) => { const d = Math.abs(a - b) % (2 * Math.PI); return d > Math.PI ? 2 * Math.PI - d : d }
@@ -382,7 +383,7 @@ function NodePreview({ wish, count, onEdit }) {
         <div className="flex gap-1.5 overflow-x-auto">
           {links.map((a) => (
             <a key={a.id} href={a.url} target="_blank" rel="noreferrer" className="max-w-40 shrink-0 truncate rounded-full bg-stone-100 px-2.5 py-1 text-[11px] text-blue-700">
-              🔗 {a.caption || host(a.url)}
+              {linkKind(a.url).icon} {a.caption || (linkKind(a.url).kind === 'link' ? host(a.url) : linkKind(a.url).label)}
             </a>
           ))}
         </div>
