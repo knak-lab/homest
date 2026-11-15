@@ -17,13 +17,13 @@ export function calcPlan(p) {
   const buildingTsubo = area > 0 && coverage > 0 ? Math.round((area * coverage) / 100 / M2_PER_TSUBO * 10) / 10 : 0
   const buildingPrice = buildingTsubo * num(p.tsubo_price)
   const landPrice = num(p.land_price)
-  // 諸経費は現金で払う前提：購入総額には入れるが、借入金（土地＋建物−頭金）には入れない。空なら null（お金ちゃんは諸経費率で計算）
+  // 諸経費も借入金に入れ、頭金で相殺する：借入金＝土地＋建物＋諸経費−頭金。空なら null（お金ちゃんは諸経費率で計算）
   const miscCost = p.misc_cost === '' || p.misc_cost == null ? null : num(p.misc_cost)
   const total = landPrice + buildingPrice + (miscCost || 0)
   const downPayment = num(p.down_payment)
   return {
     buildingTsubo, buildingPrice, landPrice, total, downPayment, miscCost,
-    loan: landPrice + buildingPrice - downPayment, cashNeeded: downPayment + (miscCost || 0),
+    loan: total - downPayment,
   }
 }
 
@@ -140,9 +140,10 @@ export default function Budget({ ctx, embedded }) {
           <p className="text-xs opacity-80">購入総額</p>
           <p className="text-2xl font-black">{fmtMan(r.total)}</p>
           <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-            <div><p className="opacity-80">自己資金（頭金＋諸経費）</p><p className="text-base font-bold">{fmtMan(r.cashNeeded)}</p></div>
+            <div><p className="opacity-80">頭金</p><p className="text-base font-bold">{fmtMan(r.downPayment)}</p></div>
             <div><p className="opacity-80">借入金</p><p className={`text-base font-bold ${r.loan < 0 ? 'text-rose-200' : ''}`}>{r.total ? fmtMan(r.loan) : '—'}</p></div>
           </div>
+          {r.miscCost ? <p className="mt-2 text-xs opacity-80">うち諸経費（支出）{fmtMan(r.miscCost)}</p> : null}
         </section>
 
         <section className="space-y-2 rounded-xl bg-white p-3 shadow-sm">
@@ -172,7 +173,7 @@ export default function Budget({ ctx, embedded }) {
           <h3 className="text-sm font-bold">💰 資金</h3>
           <NumRow label="諸経費" unit="万円" value={plan.misc_cost} onChange={(v) => update({ misc_cost: v })}
             hint={r.landPrice + r.buildingPrice ? `目安 ${fmtMan((r.landPrice + r.buildingPrice) * 0.07)}〜${fmtMan((r.landPrice + r.buildingPrice) * 0.1)}` : ''} />
-          <p className="text-[11px] text-stone-400">登記・仲介手数料・ローン手数料・火災保険・引っ越しなど。現金で払う前提で、借入金には入れません</p>
+          <p className="text-[11px] text-stone-400">登記・仲介手数料・ローン手数料・火災保険・引っ越しなど。借入金に入れ、頭金で相殺します</p>
           <NumRow label="頭金" unit="万円" value={plan.down_payment} onChange={(v) => update({ down_payment: v })} />
           <Row label="借入金"><span className={`font-bold ${r.loan < 0 ? 'text-rose-600' : ''}`}>{r.total ? fmtMan(r.loan) : '—'}</span></Row>
         </section>
