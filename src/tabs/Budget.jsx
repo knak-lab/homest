@@ -3,8 +3,8 @@ import { supabase } from '../lib/supabase'
 
 // 予算：土地・建物の総額と借入額の試算。お金ちゃんの「家」タブにも埋め込んで同じ画面を表示する
 const M2_PER_TSUBO = 3.305785
-const FIELDS = ['land_price', 'land_area', 'coverage_ratio', 'tsubo_price', 'down_payment']
-const EMPTY = { land_id: null, builder_id: null, land_price: '', land_area: '', coverage_ratio: '', tsubo_price: '', down_payment: '' }
+const FIELDS = ['land_price', 'land_area', 'coverage_ratio', 'tsubo_price', 'down_payment', 'misc_cost']
+const EMPTY = { land_id: null, builder_id: null, land_price: '', land_area: '', coverage_ratio: '', tsubo_price: '', down_payment: '', misc_cost: '' }
 
 const num = (v) => Number(String(v ?? '').replace(/[,\s]/g, '')) || 0
 const fmtMan = (n) => (n ? `${(Math.round(n * 10) / 10).toLocaleString()}万円` : '—')
@@ -17,8 +17,14 @@ export function calcPlan(p) {
   const buildingTsubo = area > 0 && coverage > 0 ? Math.round((area * coverage) / 100 / M2_PER_TSUBO * 10) / 10 : 0
   const buildingPrice = buildingTsubo * num(p.tsubo_price)
   const landPrice = num(p.land_price)
-  const total = landPrice + buildingPrice
-  return { buildingTsubo, buildingPrice, landPrice, total, downPayment: num(p.down_payment), loan: total - num(p.down_payment) }
+  // 諸経費は現金で払う前提：購入総額には入れるが、借入金（土地＋建物−頭金）には入れない。空なら null（お金ちゃんは諸経費率で計算）
+  const miscCost = p.misc_cost === '' || p.misc_cost == null ? null : num(p.misc_cost)
+  const total = landPrice + buildingPrice + (miscCost || 0)
+  const downPayment = num(p.down_payment)
+  return {
+    buildingTsubo, buildingPrice, landPrice, total, downPayment, miscCost,
+    loan: landPrice + buildingPrice - downPayment, cashNeeded: downPayment + (miscCost || 0),
+  }
 }
 
 export default function Budget({ ctx, embedded }) {
@@ -59,7 +65,12 @@ export default function Budget({ ctx, embedded }) {
     const t = setTimeout(async () => {
       const row = { household_id: hid, land_id: plan.land_id, builder_id: plan.builder_id, updated_at: new Date().toISOString() }
       FIELDS.forEach((k) => { row[k] = plan[k] === '' ? null : num(plan[k]) })
-      const { error } = await supabase.from('house_plans').upsert(row)
+      let { error } = await supabase.from('house_plans').upsert(row)
+      // 諸経費の列（migration 0008）がまだ無いデータベースでは、諸経費だけ外して保存する
+      if (error && String(error.message || '').includes('misc_cost')) {
+        const { misc_cost: _skip, ...rest } = row
+        ;({ error } = await supabase.from('house_plans').upsert(rest))
+      }
       dirty.current = false
       if (error) return setStatus('error')
       exists.current = true
@@ -129,7 +140,7 @@ export default function Budget({ ctx, embedded }) {
           <p className="text-xs opacity-80">購入総額</p>
           <p className="text-2xl font-black">{fmtMan(r.total)}</p>
           <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-            <div><p className="opacity-80">頭金</p><p className="text-base font-bold">{fmtMan(r.downPayment)}</p></div>
+            <div><p className="opacity-80">自己資金（頭金＋諸経費）</p><p className="text-base font-bold">{fmtMan(r.cashNeeded)}</p></div>
             <div><p className="opacity-80">借入金</p><p className={`text-base font-bold ${r.loan < 0 ? 'text-rose-200' : ''}`}>{r.total ? fmtMan(r.loan) : '—'}</p></div>
           </div>
         </section>
@@ -159,6 +170,9 @@ export default function Budget({ ctx, embedded }) {
 
         <section className="space-y-2 rounded-xl bg-white p-3 shadow-sm">
           <h3 className="text-sm font-bold">💰 資金</h3>
+          <NumRow label="諸経費" unit="万円" value={plan.misc_cost} onChange={(v) => update({ misc_cost: v })}
+            hint={r.landPrice + r.buildingPrice ? `目安 ${fmtMan((r.landPrice + r.buildingPrice) * 0.07)}〜${fmtMan((r.landPrice + r.buildingPrice) * 0.1)}` : ''} />
+          <p className="text-[11px] text-stone-400">登記・仲介手数料・ローン手数料・火災保険・引っ越しなど。現金で払う前提で、借入金には入れません</p>
           <NumRow label="頭金" unit="万円" value={plan.down_payment} onChange={(v) => update({ down_payment: v })} />
           <Row label="借入金"><span className={`font-bold ${r.loan < 0 ? 'text-rose-600' : ''}`}>{r.total ? fmtMan(r.loan) : '—'}</span></Row>
         </section>
