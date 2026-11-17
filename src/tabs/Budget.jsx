@@ -70,6 +70,7 @@ export default function Budget({ ctx, embedded }) {
       if (error && String(error.message || '').includes('misc_cost')) {
         const { misc_cost: _skip, ...rest } = row
         ;({ error } = await supabase.from('house_plans').upsert(rest))
+        if (!error && row.misc_cost != null) { dirty.current = false; exists.current = true; return setStatus('nomisc') }
       }
       dirty.current = false
       if (error) return setStatus('error')
@@ -131,8 +132,8 @@ export default function Budget({ ctx, embedded }) {
       <div className="mx-auto max-w-xl space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-black text-moss">🏡 予算</h2>
-          <span className={`text-xs ${status === 'error' ? 'text-rose-600' : 'text-stone-400'}`}>
-            {status === 'saving' ? '保存中…' : status === 'saved' ? '✓ 保存済み' : status === 'error' ? '保存できませんでした' : ''}
+          <span className={`text-xs ${status === 'error' || status === 'nomisc' ? 'text-rose-600' : 'text-stone-400'}`}>
+            {status === 'saving' ? '保存中…' : status === 'saved' ? '✓ 保存済み' : status === 'error' ? '保存できませんでした' : status === 'nomisc' ? '諸経費だけ保存できません（データベースの更新が必要）' : ''}
           </span>
         </div>
 
