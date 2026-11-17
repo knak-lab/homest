@@ -3,8 +3,8 @@ import { supabase } from '../lib/supabase'
 
 // 予算：土地・建物の総額と借入額の試算。お金ちゃんの「家」タブにも埋め込んで同じ画面を表示する
 const M2_PER_TSUBO = 3.305785
-const FIELDS = ['land_price', 'land_area', 'coverage_ratio', 'tsubo_price', 'down_payment', 'misc_cost']
-const EMPTY = { land_id: null, builder_id: null, land_price: '', land_area: '', coverage_ratio: '', tsubo_price: '', down_payment: '', misc_cost: '' }
+const FIELDS = ['land_price', 'land_area', 'coverage_ratio', 'tsubo_price', 'down_payment', 'misc_cost', 'gift']
+const EMPTY = { land_id: null, builder_id: null, land_price: '', land_area: '', coverage_ratio: '', tsubo_price: '', down_payment: '', misc_cost: '', gift: '' }
 
 const num = (v) => Number(String(v ?? '').replace(/[,\s]/g, '')) || 0
 const fmtMan = (n) => (n ? `${(Math.round(n * 10) / 10).toLocaleString()}万円` : '—')
@@ -21,8 +21,11 @@ export function calcPlan(p) {
   const miscCost = p.misc_cost === '' || p.misc_cost == null ? null : num(p.misc_cost)
   const total = landPrice + buildingPrice + (miscCost || 0)
   const downPayment = num(p.down_payment)
+  // 贈与（親などからの住宅取得資金）は頭金に充てる。頭金のうち自分の預金から出すのは 頭金−贈与
+  const gift = num(p.gift)
   return {
-    buildingTsubo, buildingPrice, landPrice, total, downPayment, miscCost,
+    buildingTsubo, buildingPrice, landPrice, total, downPayment, miscCost, gift,
+    ownCash: Math.max(0, downPayment - gift),
     loan: total - downPayment,
   }
 }
@@ -66,11 +69,16 @@ export default function Budget({ ctx, embedded }) {
       const row = { household_id: hid, land_id: plan.land_id, builder_id: plan.builder_id, updated_at: new Date().toISOString() }
       FIELDS.forEach((k) => { row[k] = plan[k] === '' ? null : num(plan[k]) })
       let { error } = await supabase.from('house_plans').upsert(row)
-      // 諸経費の列（migration 0008）がまだ無いデータベースでは、諸経費だけ外して保存する
-      if (error && String(error.message || '').includes('misc_cost')) {
-        const { misc_cost: _skip, ...rest } = row
-        ;({ error } = await supabase.from('house_plans').upsert(rest))
-        if (!error && row.misc_cost != null) { dirty.current = false; exists.current = true; return setStatus('nomisc') }
+      // 諸経費（migration 0008）・贈与（0009）の列がまだ無いデータベースでは、その列だけ外して保存する
+      const dropped = []
+      for (const col of ['misc_cost', 'gift']) {
+        if (!error || !String(error.message || '').includes(col)) continue
+        delete row[col]
+        dropped.push(col)
+        ;({ error } = await supabase.from('house_plans').upsert(row))
+      }
+      if (!error && dropped.some((c) => plan[c] !== '' && plan[c] != null)) {
+        dirty.current = false; exists.current = true; return setStatus('nomisc')
       }
       dirty.current = false
       if (error) return setStatus('error')
@@ -133,7 +141,7 @@ export default function Budget({ ctx, embedded }) {
         <div className="flex items-center justify-between">
           <h2 className="text-base font-black text-moss">🏡 予算</h2>
           <span className={`text-xs ${status === 'error' || status === 'nomisc' ? 'text-rose-600' : 'text-stone-400'}`}>
-            {status === 'saving' ? '保存中…' : status === 'saved' ? '✓ 保存済み' : status === 'error' ? '保存できませんでした' : status === 'nomisc' ? '諸経費だけ保存できません（データベースの更新が必要）' : ''}
+            {status === 'saving' ? '保存中…' : status === 'saved' ? '✓ 保存済み' : status === 'error' ? '保存できませんでした' : status === 'nomisc' ? '諸経費・贈与が保存できません（データベースの更新が必要）' : ''}
           </span>
         </div>
 
@@ -176,6 +184,14 @@ export default function Budget({ ctx, embedded }) {
             hint={r.landPrice + r.buildingPrice ? `目安 ${fmtMan((r.landPrice + r.buildingPrice) * 0.07)}〜${fmtMan((r.landPrice + r.buildingPrice) * 0.1)}` : ''} />
           <p className="text-[11px] text-stone-400">登記・仲介手数料・ローン手数料・火災保険・引っ越しなど。借入金に入れ、頭金で相殺します</p>
           <NumRow label="頭金" unit="万円" value={plan.down_payment} onChange={(v) => update({ down_payment: v })} />
+          <NumRow label="うち贈与" unit="万円" value={plan.gift} onChange={(v) => update({ gift: v })} />
+          <p className="text-[11px] text-stone-400">
+            親などから受け取る住宅取得資金。頭金に充てます。非課税の特例（省エネ等住宅は1,000万円まで）は期限・入居時期の条件があり、
+            翌年に贈与税の申告が必要です。税理士に確認を
+          </p>
+          {r.gift > 0 && (
+            <Row label="頭金のうち自分の預金から"><span className="font-bold">{fmtMan(r.ownCash)}</span></Row>
+          )}
           <Row label="借入金"><span className={`font-bold ${r.loan < 0 ? 'text-rose-600' : ''}`}>{r.total ? fmtMan(r.loan) : '—'}</span></Row>
         </section>
 
