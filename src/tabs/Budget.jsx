@@ -6,6 +6,19 @@ const M2_PER_TSUBO = 3.305785
 const FIELDS = ['land_price', 'land_area', 'coverage_ratio', 'tsubo_price', 'down_payment', 'misc_cost', 'gift']
 const EMPTY = { land_id: null, builder_id: null, land_price: '', land_area: '', coverage_ratio: '', tsubo_price: '', down_payment: '', misc_cost: '', gift: '' }
 
+// 諸経費の内訳（家づくりの総額チェックの項目）。build: 建物の工事費の一部（住宅ローン控除の対象に入る）
+export const MISC_ITEMS = [
+  { key: 'option',     label: 'オプション工事', note: '標準仕様からの追加・変更', build: true },
+  { key: 'ancillary',  label: '付帯工事', note: '仮設工事・屋外給排水・ガス工事など（本体の約10〜20%）', build: true, rate: [0.1, 0.2] },
+  { key: 'other_work', label: 'その他の工事', note: '構造計算・測量・建築確認申請・地盤改良など', build: true },
+  { key: 'tax',        label: '消費税', note: '坪単価が税抜のときだけ（工事費の10%）', build: true },
+  { key: 'separate',   label: '別途工事', note: '外構・空調設備・カーテン・照明など' },
+  { key: 'fees',       label: '諸費用', note: 'ローン諸費用・火災保険・登記など' },
+  { key: 'land_fees',  label: '土地関係費用', note: '土地の仲介手数料・登記など（土地代金は土地の欄）' },
+  { key: 'furniture',  label: '家具・家電', note: '' },
+  { key: 'moving',     label: '引越し', note: '' },
+]
+
 const num = (v) => Number(String(v ?? '').replace(/[,\s]/g, '')) || 0
 const fmtMan = (n) => (n ? `${(Math.round(n * 10) / 10).toLocaleString()}万円` : '—')
 const fmtInput = (v) => (v === '' || v == null ? '' : Number(v).toLocaleString('ja-JP', { maximumFractionDigits: 2 }))
@@ -18,13 +31,18 @@ export function calcPlan(p) {
   const buildingPrice = buildingTsubo * num(p.tsubo_price)
   const landPrice = num(p.land_price)
   // 諸経費も借入金に入れ、頭金で相殺する：借入金＝土地＋建物＋諸経費−頭金。空なら null（お金ちゃんは諸経費率で計算）
-  const miscCost = p.misc_cost === '' || p.misc_cost == null ? null : num(p.misc_cost)
+  // 内訳が入っていれば、その合計を諸経費にする（なければ諸経費の欄の値）
+  const items = p.misc_items || {}
+  const hasItems = MISC_ITEMS.some((it) => num(items[it.key]) > 0)
+  const itemsTotal = MISC_ITEMS.reduce((t, it) => t + num(items[it.key]), 0)
+  const buildExtra = MISC_ITEMS.reduce((t, it) => t + (it.build ? num(items[it.key]) : 0), 0)
+  const miscCost = hasItems ? itemsTotal : (p.misc_cost === '' || p.misc_cost == null ? null : num(p.misc_cost))
   const total = landPrice + buildingPrice + (miscCost || 0)
   const downPayment = num(p.down_payment)
   // 贈与（親などからの住宅取得資金）は頭金に充てる。頭金のうち自分の預金から出すのは 頭金−贈与
   const gift = num(p.gift)
   return {
-    buildingTsubo, buildingPrice, landPrice, total, downPayment, miscCost, gift,
+    buildingTsubo, buildingPrice, landPrice, total, downPayment, miscCost, gift, hasItems, buildExtra: hasItems ? buildExtra : 0,
     ownCash: Math.max(0, downPayment - gift),
     loan: total - downPayment,
   }
@@ -49,7 +67,9 @@ export default function Budget({ ctx, embedded }) {
     ])
     if (p.error) return setStatus('error')
     exists.current = Boolean(p.data)
-    setPlan(p.data ? { ...EMPTY, ...Object.fromEntries(Object.entries(p.data).map(([k, v]) => [k, v ?? (FIELDS.includes(k) ? '' : v)])) } : { ...EMPTY })
+    setPlan(p.data
+      ? { ...EMPTY, ...Object.fromEntries(Object.entries(p.data).map(([k, v]) => [k, v ?? (FIELDS.includes(k) ? '' : v)])), misc_items: p.data.misc_items || {} }
+      : { ...EMPTY, misc_items: {} })
     setLands(l.data || [])
     setBuilders(b.data || [])
   }, [hid])
@@ -68,16 +88,21 @@ export default function Budget({ ctx, embedded }) {
     const t = setTimeout(async () => {
       const row = { household_id: hid, land_id: plan.land_id, builder_id: plan.builder_id, updated_at: new Date().toISOString() }
       FIELDS.forEach((k) => { row[k] = plan[k] === '' ? null : num(plan[k]) })
+      // 内訳が入っていれば、その合計を諸経費として保存する（お金ちゃん側の古い版でも同じ額になるように）
+      const items = Object.fromEntries(Object.entries(plan.misc_items || {}).filter(([, v]) => v !== '' && v != null).map(([k, v]) => [k, num(v)]))
+      row.misc_items = Object.keys(items).length ? items : null
+      const rr = calcPlan(plan)
+      if (rr.hasItems) row.misc_cost = rr.miscCost
       let { error } = await supabase.from('house_plans').upsert(row)
       // 諸経費（migration 0008）・贈与（0009）の列がまだ無いデータベースでは、その列だけ外して保存する
       const dropped = []
-      for (const col of ['misc_cost', 'gift']) {
+      for (const col of ['misc_cost', 'gift', 'misc_items']) {
         if (!error || !String(error.message || '').includes(col)) continue
         delete row[col]
         dropped.push(col)
         ;({ error } = await supabase.from('house_plans').upsert(row))
       }
-      if (!error && dropped.some((c) => plan[c] !== '' && plan[c] != null)) {
+      if (!error && dropped.some((c) => (c === 'misc_items' ? rr.hasItems : plan[c] !== '' && plan[c] != null))) {
         dirty.current = false; exists.current = true; return setStatus('nomisc')
       }
       dirty.current = false
@@ -141,7 +166,7 @@ export default function Budget({ ctx, embedded }) {
         <div className="flex items-center justify-between">
           <h2 className="text-base font-black text-moss">🏡 予算</h2>
           <span className={`text-xs ${status === 'error' || status === 'nomisc' ? 'text-rose-600' : 'text-stone-400'}`}>
-            {status === 'saving' ? '保存中…' : status === 'saved' ? '✓ 保存済み' : status === 'error' ? '保存できませんでした' : status === 'nomisc' ? '諸経費・贈与が保存できません（データベースの更新が必要）' : ''}
+            {status === 'saving' ? '保存中…' : status === 'saved' ? '✓ 保存済み' : status === 'error' ? '保存できませんでした' : status === 'nomisc' ? '諸経費・内訳・贈与が保存できません（データベースの更新が必要）' : ''}
           </span>
         </div>
 
@@ -180,9 +205,25 @@ export default function Budget({ ctx, embedded }) {
 
         <section className="space-y-2 rounded-xl bg-white p-3 shadow-sm">
           <h3 className="text-sm font-bold">💰 資金</h3>
-          <NumRow label="諸経費" unit="万円" value={plan.misc_cost} onChange={(v) => update({ misc_cost: v })}
-            hint={r.landPrice + r.buildingPrice ? `目安 ${fmtMan((r.landPrice + r.buildingPrice) * 0.07)}〜${fmtMan((r.landPrice + r.buildingPrice) * 0.1)}` : ''} />
-          <p className="text-[11px] text-stone-400">登記・仲介手数料・ローン手数料・火災保険・引っ越しなど。借入金に入れ、頭金で相殺します</p>
+          {r.hasItems ? (
+            <Row label="諸経費"><span className="font-bold">{fmtMan(r.miscCost)}</span><span className="ml-1 text-[11px] text-stone-400">内訳の合計</span></Row>
+          ) : (
+            <NumRow label="諸経費" unit="万円" value={plan.misc_cost} onChange={(v) => update({ misc_cost: v })}
+              hint={r.landPrice + r.buildingPrice ? `目安 ${fmtMan((r.landPrice + r.buildingPrice) * 0.07)}〜${fmtMan((r.landPrice + r.buildingPrice) * 0.1)}` : ''} />
+          )}
+          <details className="rounded-lg bg-stone-50 px-2 py-1" open={r.hasItems}>
+            <summary className="cursor-pointer py-1 text-xs font-bold text-stone-600">諸経費の内訳を入れる</summary>
+            {MISC_ITEMS.map((it) => (
+              <div key={it.key}>
+                <NumRow label={it.label} unit="万円" value={plan.misc_items?.[it.key] ?? ''}
+                  onChange={(v) => update({ misc_items: { ...(plan.misc_items || {}), [it.key]: v } })}
+                  hint={it.rate && r.buildingPrice ? `目安 ${fmtMan(r.buildingPrice * it.rate[0])}〜${fmtMan(r.buildingPrice * it.rate[1])}` : ''} />
+                {it.note && <p className="-mt-1 mb-1 text-[11px] text-stone-400">{it.note}</p>}
+              </div>
+            ))}
+            <p className="pb-1 text-[11px] text-stone-400">1つでも入れると、合計が諸経費になります。本体工事は建物の欄、土地代金は土地の欄です</p>
+          </details>
+          <p className="text-[11px] text-stone-400">借入金に入れ、頭金で相殺します</p>
           <NumRow label="頭金" unit="万円" value={plan.down_payment} onChange={(v) => update({ down_payment: v })} />
           <NumRow label="うち贈与" unit="万円" value={plan.gift} onChange={(v) => update({ gift: v })} />
           <p className="text-[11px] text-stone-400">
