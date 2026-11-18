@@ -14,7 +14,20 @@ export const MISC_ITEMS = [
   { key: 'tax',        label: '消費税', note: '坪単価が税抜のときだけ（工事費の10%）', build: true },
   { key: 'separate',   label: '別途工事', note: '外構・空調設備・カーテン・照明など' },
   { key: 'fees',       label: '諸費用', note: 'ローン諸費用・火災保険・登記など' },
-  { key: 'land_fees',  label: '土地関係費用', note: '土地の仲介手数料・登記など（土地代金は土地の欄）' },
+  // 土地関係費用（不動産会社の住宅購入計画書の「購入諸経費」に合わせた内訳）。土地代金は土地の欄
+  { key: 'land_broker',   group: 'land', label: '仲介手数料', note: '土地価格×3%＋6万円＋消費税が上限' },
+  { key: 'land_office',   group: 'land', label: '事務手数料', note: '不動産会社の手数料' },
+  { key: 'land_register', group: 'land', label: '土地登記費用', note: '所有権移転・先行登記・司法書士' },
+  { key: 'land_stamp',    group: 'land', label: '売買契約印紙代', note: '' },
+  { key: 'land_tax',      group: 'land', label: '固定資産税・都市計画税の日割り', note: '引き渡し日から年末までの分を売主に払う' },
+  { key: 'land_develop',  group: 'land', label: '開発申請費用', note: '' },
+  { key: 'land_arakawa',  group: 'land', label: '荒川右岸申請費用', note: '雨水の流出を抑える申請など' },
+  { key: 'land_sewer',    group: 'land', label: '受益者負担金（本下水）', note: '市役所' },
+  { key: 'land_water',    group: 'land', label: '上水道加入金', note: '市役所' },
+  { key: 'land_grading',  group: 'land', label: '造成費用', note: '' },
+  { key: 'land_loan',     group: 'land', label: '土地の融資諸経費', note: '銀行保証料・事務手数料・金消契約印紙代など（土地の分）' },
+  { key: 'land_reserve',  group: 'land', label: '予備費（土地）', note: '' },
+  { key: 'land_fees',     group: 'land', label: 'その他（土地）', note: '' },
   { key: 'furniture',  label: '家具・家電', note: '' },
   { key: 'moving',     label: '引越し', note: '' },
 ]
@@ -148,6 +161,7 @@ export default function Budget({ ctx, embedded }) {
   if (!plan) return <p className="p-6 text-center text-sm text-stone-500">読み込み中…</p>
 
   const r = result
+  const landFeesTotal = MISC_ITEMS.reduce((t, it) => t + (it.group === 'land' ? num(plan.misc_items?.[it.key]) : 0), 0)
   const land = lands.find((x) => x.id === plan.land_id)
   const builder = builders.find((x) => x.id === plan.builder_id)
 
@@ -213,14 +227,19 @@ export default function Budget({ ctx, embedded }) {
           )}
           <details className="rounded-lg bg-stone-50 px-2 py-1" open={r.hasItems}>
             <summary className="cursor-pointer py-1 text-xs font-bold text-stone-600">諸経費の内訳を入れる</summary>
-            {MISC_ITEMS.map((it) => (
-              <div key={it.key}>
-                <NumRow label={it.label} unit="万円" value={plan.misc_items?.[it.key] ?? ''}
-                  onChange={(v) => update({ misc_items: { ...(plan.misc_items || {}), [it.key]: v } })}
-                  hint={it.rate && r.buildingPrice ? `目安 ${fmtMan(r.buildingPrice * it.rate[0])}〜${fmtMan(r.buildingPrice * it.rate[1])}` : ''} />
-                {it.note && <p className="-mt-1 mb-1 text-[11px] text-stone-400">{it.note}</p>}
-              </div>
+            {MISC_ITEMS.filter((it) => !it.group).map((it) => (
+              <MiscRow key={it.key} it={it} plan={plan} update={update} r={r} />
             ))}
+            <details className="my-1 rounded-lg border border-stone-200 bg-white px-2 py-1" open={landFeesTotal > 0}>
+              <summary className="flex cursor-pointer items-center justify-between py-1 text-sm text-stone-600">
+                <span>土地関係費用<span className="ml-1 text-[11px] text-stone-400">タップで内訳</span></span>
+                <span className="font-bold">{landFeesTotal ? fmtMan(landFeesTotal) : '—'}</span>
+              </summary>
+              {MISC_ITEMS.filter((it) => it.group === 'land').map((it) => (
+                <MiscRow key={it.key} it={it} plan={plan} update={update} r={r} />
+              ))}
+              <p className="pb-1 text-[11px] text-stone-400">不動産会社の「住宅購入計画書」の購入諸経費に合わせた項目です。土地代金は土地の欄に入れます</p>
+            </details>
             <p className="pb-1 text-[11px] text-stone-400">1つでも入れると、合計が諸経費になります。本体工事は建物の欄、土地代金は土地の欄です</p>
           </details>
           <p className="text-[11px] text-stone-400">借入金に入れ、頭金で相殺します</p>
@@ -238,6 +257,18 @@ export default function Budget({ ctx, embedded }) {
 
         <p className="text-center text-[11px] text-stone-400">homest とお金ちゃんの「家」タブで同じ内容を表示しています</p>
       </div>
+    </div>
+  )
+}
+
+// 諸経費の内訳の1行
+function MiscRow({ it, plan, update, r }) {
+  return (
+    <div>
+      <NumRow label={it.label} unit="万円" value={plan.misc_items?.[it.key] ?? ''}
+        onChange={(v) => update({ misc_items: { ...(plan.misc_items || {}), [it.key]: v } })}
+        hint={it.rate && r.buildingPrice ? `目安 ${fmtMan(r.buildingPrice * it.rate[0])}〜${fmtMan(r.buildingPrice * it.rate[1])}` : ''} />
+      {it.note && <p className="-mt-1 mb-1 text-[11px] text-stone-400">{it.note}</p>}
     </div>
   )
 }
